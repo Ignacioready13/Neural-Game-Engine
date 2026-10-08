@@ -1,0 +1,24 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+engine/dist/
+
+# Generated training data (never commit)
+/data/
+/engine/data/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+
+# Env
+.env
+.env.local
+

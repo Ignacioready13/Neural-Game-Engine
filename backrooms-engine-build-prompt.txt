@@ -1,0 +1,612 @@
+PROJECT BRIEF — PHASE 1 BUILD SPECIFICATION
+"Procedurally Generated Backrooms-Style Navigation Engine (Classical / Training-Data-Generation Engine)"
+================================================================================
+
+You are building Phase 1 of a larger research project. Read this entire document
+before writing any code. It is long and detailed on purpose — follow it precisely
+rather than filling gaps with your own assumptions where it gives you an explicit
+answer. Where it explicitly leaves a decision to you, use good engineering
+judgment and document the decision in the repo's README.
+
+--------------------------------------------------------------------------------
+0. ROLE
+--------------------------------------------------------------------------------
+You are acting as the lead engineering agent for this build. You should plan the
+work, decompose it into subsystems, delegate implementation work to subagents,
+and perform your own verification pass before declaring the work complete. Agent
+delegation instructions are in Section 12 — read that section before starting,
+since it affects how you should structure your own workflow from the outset.
+
+--------------------------------------------------------------------------------
+1. LONG-TERM PROJECT VISION (CONTEXT ONLY — NOT PART OF THIS BUILD)
+--------------------------------------------------------------------------------
+This section exists only so you understand WHY certain requirements below exist.
+Do not build any of the following — it is future work, described here purely for
+context.
+
+The long-term goal is to train a neural network ("the dynamics model") that
+generates first-person video frames of someone walking through an endless,
+procedurally-varied, backrooms-style maze of hallways and rooms, frame-by-frame,
+conditioned on a small control signal and a short window of its own previously
+generated frames. Eventually we want this neural model to hallucinate increasingly
+surreal, dreamlike, unpredictable spaces that no classical engine could have
+been scripted to produce.
+
+The engine you are building now is NOT that neural model. It is a classical,
+fully deterministic 3D engine whose only purpose is to generate a large dataset
+of (sequence of frames, sequence of control signals) pairs that will later be
+used to train that neural model. Once the neural model is trained, THIS engine
+is discarded entirely — it will never run alongside the trained model, and the
+trained model will never call back into it. This has a specific consequence you
+must design for: every design decision in this engine should be made from the
+perspective of "what is the best possible classical teacher for an imitation-
+learning dataset," not "what is the best possible permanent game engine."
+Concretely this means: favor whatever produces clean, consistent, information-
+rich training signal over whatever would be more elegant as a shipped game.
+
+--------------------------------------------------------------------------------
+2. SCOPE OF THIS BUILD
+--------------------------------------------------------------------------------
+IN SCOPE for this build:
+  - The procedural world generator (hallways and rooms, per Section 5)
+  - The point-and-click navigation/control scheme (Section 6)
+  - Fixed-timestep simulation (Section 7)
+  - Rendering, resolution pipeline, and backrooms aesthetic (Section 8)
+  - Two operating modes: human-interactive play, and headless scripted/bot data
+    generation (Section 9)
+  - Dataset/training-label output format (Section 10)
+  - Parallelism and GPU-acceleration for headless data generation (Section 11)
+
+OUT OF SCOPE for this build (see Section 13 for the full explicit list):
+  - The neural network itself (any training code, any model architecture)
+  - Sophisticated bot/agent walking policies — you will build a minimal
+    placeholder bot sufficient to exercise and test the pipeline end-to-end, but
+    real data-collection bot behavior will be specified in a separate, later
+    prompt. Do not over-invest in bot intelligence here.
+
+--------------------------------------------------------------------------------
+3. REPOSITORY STRUCTURE
+--------------------------------------------------------------------------------
+Set up a single monorepo, structured to make it obvious where a future, separate
+neural-network codebase will eventually live, even though you are not building
+that part now.
+
+  /engine/              <- everything you build in this prompt lives here
+    /src/
+    /config/
+    /tests/
+    package.json, tsconfig.json, etc.
+  /neural/               <- create this as an EMPTY placeholder directory with
+                            just a README.md stub explaining it's reserved for
+                            future work. Do not put anything else in it.
+  /data/                 <- default output location for generated datasets
+                            (should be gitignored; do not commit generated data)
+  README.md              <- top-level project README explaining the two-phase
+                            architecture described in Section 1
+  .gitignore
+
+Initialize git at the repo root and commit incrementally with meaningful commit
+messages as you build, rather than one giant final commit.
+
+--------------------------------------------------------------------------------
+4. TECHNOLOGY STACK
+--------------------------------------------------------------------------------
+  - Language: TypeScript (not plain JavaScript) for the entire /engine codebase.
+  - Rendering: three.js (WebGL).
+  - Build/dev tooling: Vite, for both the interactive dev server (human play
+    mode) and producing a build that can be loaded by a headless browser.
+  - Headless automation: Puppeteer (Node.js), for driving a headless Chromium
+    instance to run the engine without a visible window and capture frames.
+  - Runtime: Node.js for all tooling, orchestration, the worker pool, and the
+    data-export pipeline. Keep the entire engine + pipeline in the TypeScript/
+    Node ecosystem — do not introduce Python anywhere in this build. (Python
+    will be used later, in the separate neural-network codebase, to consume the
+    dataset this engine produces — but that is out of scope here.)
+  - All tunable parameters described anywhere in this document (resolution,
+    timestep, room/hallway size ranges, jerk limits, debounce timing, worker
+    concurrency, etc.) must live in ONE central, well-commented config module
+    (e.g. /engine/config/config.ts), not scattered as magic numbers through the
+    codebase. Every tunable must have a sensible default, documented inline with
+    a one-line comment explaining what it controls.
+
+--------------------------------------------------------------------------------
+5. WORLD GENERATION RULES
+--------------------------------------------------------------------------------
+
+5.1 Entities and lifecycle
+At any moment, only a small number of "entities" (hallway segments or rooms)
+need to exist as real geometry: the entity the player currently occupies, and
+every entity directly attached to it via a doorway/junction the player can
+currently see or reach. Entities further away than that must NOT be pre-
+generated.
+
+Generation is lazy: an entity is generated (its geometry, materials, doorway
+layout, etc. are decided and instantiated) the first moment it becomes a
+directly-attached neighbor of the player's current entity — i.e., the moment a
+doorway or junction leading to it comes into view/relevance. It does not need
+to be decided in advance.
+
+Disposal: once an entity is no longer the current entity or a direct neighbor
+of the current entity, dispose of its three.js geometry/materials fully (do not
+just hide it) so that long play sessions or long bot-driven data-generation runs
+do not leak memory. There is no requirement that re-visiting the "same"
+coordinates later produces the same content — if a hallway loops back on itself
+in open 3D space, generate something entirely new there. Do not track or
+enforce any global coherent floor plan. This is an intentional design choice,
+not an oversight — do not add floor-plan coherence tracking.
+
+5.2 Hallways
+  - Fixed width (one config constant; default 4 world-units), constant for all
+    hallways in a given run.
+  - Random length within a configured min/max range (default range: 8-24
+    world-units) before terminating.
+  - A hallway segment terminates in exactly one of the following:
+      (a) a 90-degree bend into a new hallway segment (still the "same"
+          logical hallway, just changes direction), or
+      (b) a junction where it forks into two or more hallway directions
+          (support 2-way forks, 3-way T-junctions, and 4-way junctions; choose
+          which randomly, weighted so 2-way and 3-way are most common and
+          4-way is rarer — expose these weights in config), or
+      (c) a room (see 5.3).
+  - All hallway-to-hallway geometry (bends, junctions) must only ever change
+    direction in exactly 90-degree increments. From directly overhead, every
+    hallway segment is either axis-aligned horizontal or vertical — never any
+    other angle.
+  - Independently of where it terminates, a hallway segment may have doorways
+    on its left side, right side, or both, at random positions along its
+    length, each doorway leading to a room (see 5.3). A hallway segment does
+    not have to have any side doorways at all.
+  - Side doorways must respect the minimum-spacing rule in 5.4.
+  - Hallway-to-hallway connections ONLY ever happen via a junction/bend (per
+    the terminate rule above) — a player can never walk from one hallway
+    directly into another hallway through what looks like a side "doorway."
+    Every side doorway in a hallway wall leads to a room, always.
+
+5.3 Rooms
+  - Always a rectangular box: 4 straight walls, a flat floor, a flat ceiling.
+  - Width and depth are each randomized independently within a configured
+    min/max range (default: 4-10 world-units each).
+  - Ceiling height is randomized independently within its own configured
+    min/max range (default: 2.5-5 world-units), independent of width/depth.
+  - IMPORTANT: player eye-height (camera height off the floor) must stay FIXED
+    regardless of a given room's ceiling height. Do not shift the camera's
+    vertical position based on room height — only the ceiling itself moves.
+  - Doorways may appear on any combination of the room's 4 walls. A given wall
+    may contain more than one doorway if the wall is long enough to fit them
+    while respecting the spacing rule in 5.4. There is no requirement that
+    every wall have a doorway.
+  - Every doorway in a room wall leads to a new hallway segment (a room never
+    connects directly to another room without an intervening hallway, however
+    short).
+  - No-dead-ends rule: every room must have AT LEAST 2 doorways in total,
+    counting the doorway the player entered through. In other words, when you
+    generate a room upon the player approaching it, you already know which
+    wall/position the entry doorway is on — generate at least 1 additional
+    doorway elsewhere in the room (could be the same wall if there's room, or
+    a different wall) so the player always has somewhere to go besides back
+    the way they came. (The very first entity of a fresh session has no "came
+    from" side — see 5.7 for how sessions start.)
+
+5.4 Doorway spacing rule (applies to both hallway side-doorways and room
+    wall-doorways)
+  - No two doorways on the same side/wall may be placed close enough together
+    that a player looking at them would reasonably assume they lead to the
+    same room on the other side. Implement this as a minimum center-to-center
+    spacing constant (default: at least 2.5x the doorway's own width) between
+    any two doorways on the same contiguous wall surface. Expose this as a
+    config constant.
+
+5.5 Fog / darkness rule (visibility limiting)
+  This is a core aesthetic AND a core data-generation requirement — implement
+  it carefully.
+  - From inside the player's current entity, looking through a doorway into a
+    directly-attached neighboring entity, that neighboring entity's interior
+    should be dimly visible (consistent with the lighting/fog design in
+    Section 8).
+  - However, any doorway that exists WITHIN that neighboring entity (i.e., a
+    doorway leading to an entity two steps away from the player) must appear
+    as flat, static, opaque blackness — not a view into anything, not even a
+    silhouette. The player should never be able to see through two doorways in
+    a row.
+  - Simplest acceptable implementation: place solid unlit black geometry (or
+    equivalent) filling each "second-degree" doorway opening, OR rely on fog
+    density tuned so visibility falls off completely by that distance — choose
+    whichever gives a cleaner, more convincing result; have the visual QA
+    subagent (Section 12.3) judge this specifically.
+
+5.6 Starting condition
+  A fresh session begins with the player partway down a short starting hallway
+  segment, already facing down its length, with no "entry doorway" to worry
+  about (the no-dead-end rule in 5.3 does not apply to this very first
+  segment). Generation proceeds normally as the player moves from there.
+
+--------------------------------------------------------------------------------
+6. CONTROL SCHEME: POINT-AND-CLICK NAVIGATION
+--------------------------------------------------------------------------------
+The player is always walking forward at a fixed speed (config constant;
+default 2 world-units/second) along a smooth spline path. The player never
+stops walking and there is no "pause to choose a door" state — motion is
+perpetual. The only thing player input ever changes is WHICH currently-visible,
+currently-reachable doorway the spline is currently steering toward.
+
+6.1 Input signal
+  The player has a free, unconstrained mouse over the full render canvas. Only
+  the X (horizontal) pixel coordinate of a click is used — ignore Y entirely,
+  there is no vertical steering in this design.
+  Maintain a single piece of state: "last clicked X" (in normalized
+  screen-space, e.g. -1 to 1). This value is HELD constant across frames,
+  step-function style, and only changes when a new click arrives. This value,
+  sampled once per simulated frame (see Section 7), IS the control signal that
+  must be recorded in the training-data output (Section 10) — it is the one
+  and only per-frame signal the future neural network will be trained on, so
+  it must be well-defined on every single simulated frame, not only on frames
+  where a click happened to occur.
+
+6.2 Doorway resolution algorithm
+  On every frame, there is a small, finite set of currently visible AND
+  currently reachable doorways/junction-exits (typically 1 to 4). "Reachable"
+  means: a jerk-limited spline (see 6.3) can be constructed from the player's
+  current position, heading, and angular velocity to that doorway's entry
+  point without exceeding the jerk/angular-acceleration threshold, within the
+  distance actually available before reaching it.
+
+  When a new click arrives (and on every frame, for determining the current
+  target even absent a new click), resolve it as follows:
+    1. Project each candidate doorway to its on-screen X position this frame.
+    2. Find the candidate whose on-screen X position is nearest to the click's
+       (or, if no click yet, the screen-center default's) X position.
+    3. If that nearest candidate is currently reachable (per the definition
+       above), select it as the new steering target.
+    4. If it is NOT reachable, search outward from it in order of increasing
+       screen-space distance from the click position, continuing in the same
+       direction the search started (i.e., if the nearest-to-click candidate
+       was to the left and unreachable, prefer the next-nearest-to-the-left
+       before trying ones to the right), and select the first reachable
+       candidate found.
+    5. If literally no candidate is currently reachable (should be rare if
+       jerk limits are tuned sensibly), keep steering toward whatever the
+       previous target was.
+
+6.3 Spline motion and jerk limiting
+  Movement must follow a smooth path (position AND heading must be continuous
+  — no instantaneous jumps or snaps, ever, including at the moment of
+  retargeting). When the steering target changes (new click, or default
+  target changes because an old target left the field of candidates), blend
+  smoothly from the player's current position/velocity/heading into a new
+  spline toward the new target — do not cut over abruptly.
+  Enforce a maximum angular acceleration ("jerk") threshold: the rate of
+  change of the player's turning rate must never exceed a configured constant.
+  This constant has no "correct" real-world value — pick a reasonable starting
+  default, expose it in config, and expect it to be hand-tuned later via human
+  playtesting (Section 9.1) until it feels comfortable, never jarring, and
+  never nauseating.
+  This same spline/jerk logic (not a second, separate implementation) MUST be
+  used identically in both human-interactive mode and headless bot-driven
+  mode — see the shared-core-logic requirement in Section 9.3. This is
+  important: if these two modes use different motion logic, the dataset
+  generated by bots will not statistically match what a human playing live
+  would produce, and the resulting trained model would not be learning the
+  motion behavior you expect.
+
+6.4 Debounce
+  Apply a minimum time between accepted re-target events (config constant;
+  default 150ms) so that rapid or accidental re-clicking does not thrash the
+  steering target back and forth. A click that arrives before the debounce
+  window has elapsed since the last accepted click should simply be ignored
+  for targeting purposes (though see 6.5 — still show the visual feedback
+  pulse for every click, even debounced ones, so the player always gets
+  confirmation their click registered as a click, even if it didn't change
+  steering).
+
+6.5 Click visual feedback
+  On every click (debounced or not), render a small, quickly fading,
+  translucent pulse of color at the exact screen position of the click —
+  purely cosmetic UI feedback, not part of the 3D world, with no effect on
+  simulation. Fade out over roughly 300-500ms.
+
+6.6 Default/idle behavior
+  When there has been no click yet in the current session (or whenever no
+  explicit target is active), the default steering target is the currently
+  reachable candidate doorway whose on-screen X position is closest to dead
+  center of the screen — i.e., the player always drifts toward whatever is
+  "straightest ahead" unless and until the player clicks to steer elsewhere.
+
+--------------------------------------------------------------------------------
+7. SIMULATION TIMING — FIXED TIMESTEP (CRITICAL REQUIREMENT)
+--------------------------------------------------------------------------------
+The simulation (player position/heading/spline progression, jerk calculations,
+world generation triggers) must advance on a FIXED simulated timestep — default
+1/20th of a simulated second per simulated frame (20Hz), exposed as a config
+constant — regardless of how long it actually takes, in real wall-clock time,
+to render and/or capture each frame.
+
+This matters most in headless data-generation mode, where many instances may
+be running in parallel, under varying system load, and an individual frame's
+real render+capture time may vary significantly run to run. Do NOT tie
+simulation advancement to real elapsed wall-clock time in that mode — always
+advance by exactly one fixed simulated timestep per generated frame. This
+guarantees that the motion statistics (how far the player moves per frame, how
+fast headings change, etc.) in the generated dataset are consistent regardless
+of how slowly or quickly the actual generation ran, and consistent with how
+the same logic behaves in human-interactive mode.
+
+In human-interactive mode, use a standard fixed-timestep game loop pattern
+(accumulate real elapsed time each render callback, step the simulation
+forward in fixed-size increments, render once after catching up) so the
+simulation logic itself is identical to headless mode, even though real frames
+are now also tied to actual elapsed time for the human player's benefit.
+
+--------------------------------------------------------------------------------
+8. RENDERING, RESOLUTION, AND AESTHETICS
+--------------------------------------------------------------------------------
+
+8.1 Resolution pipeline
+  Expose two independent, separately configurable resolution parameters:
+    - RENDER_RESOLUTION: the resolution three.js actually renders the scene at
+      internally. Default: 4x the output resolution (see below) in both
+      dimensions.
+    - OUTPUT_RESOLUTION: the final resolution frames are downsampled to before
+      being displayed (human mode) or saved to disk (headless mode). Default:
+      320x240 (a classic early-'90s first-person resolution). This is the
+      single parameter we expect to raise later once training results look
+      good at low resolution — make sure changing ONLY this value (leaving
+      RENDER_RESOLUTION's multiplier the same) is sufficient to change output
+      resolution everywhere, with no other code changes needed.
+  Downsample using a proper area/box filter (not nearest-neighbor or a naive
+  resize), since the point of supersampling is to reduce aliasing/noise before
+  the image reaches its final low resolution.
+
+8.2 Aesthetic direction: "backrooms"
+  Think: empty, slightly unsettling, liminal institutional space. Plain
+  rectangular geometry (which is all this engine generates anyway), flat or
+  simply-tiled wall/floor/ceiling materials, nothing ornate. The goal is
+  "simple but good-looking," not sparse-looking or placeholder-looking —
+  materials should be clean, properly UV-mapped/tiled without obvious
+  stretching or seams, not flat-color placeholder boxes.
+
+8.3 Lighting
+  Simple, consistent fixture-style lighting (e.g., repeated point or area
+  lights suggestive of overhead fluorescent fixtures), with a slight flicker
+  variation over time for atmosphere (keep this subtle — it should read as
+  "slightly unsettling," not distracting or seizure-inducing; keep flicker
+  frequency/intensity within safe, mild bounds). Avoid stark pitch-black
+  areas except where the fog/darkness rule (5.5) specifically calls for solid
+  blackness in second-degree doorways.
+
+8.4 Textures
+  Use simple tiling materials for floor, wall, and ceiling surfaces (a small
+  handful of distinct materials is fine for this phase — this does not need
+  to be the "pull random textures from the internet" system; that is future
+  work, out of scope here per Section 13). Whatever textures you use, make
+  sure tiling is seamless and scaled sensibly relative to room/hallway
+  dimensions.
+
+8.5 Camera
+  Standard first-person perspective camera, fixed eye-height off the floor
+  (per 5.3), reasonable field of view for this kind of space (somewhere in the
+  75-90 degree horizontal FOV range is a reasonable default — tune by feel).
+
+--------------------------------------------------------------------------------
+9. TWO OPERATING MODES
+--------------------------------------------------------------------------------
+
+9.1 Human interactive play mode
+  A normal browser-based dev build (via the Vite dev server) that a human can
+  open, play through with their actual mouse, and visually evaluate. This is
+  the primary mode you (the agent) and the human user should use to iterate on
+  how the jerk/debounce/spacing constants FEEL — tune them here.
+
+9.2 Headless scripted/bot data-generation mode
+  The same engine, launched via Puppeteer in a headless Chromium instance,
+  driven entirely by programmatic input (synthetic "clicks" fed in by a script
+  rather than real mouse events) instead of a human, running the fixed-
+  timestep simulation from Section 7, and writing frames + labels to disk per
+  Section 10 instead of (or in addition to, if useful for debugging) rendering
+  to a visible window.
+  For this build, implement a minimal placeholder bot sufficient to exercise
+  this mode end-to-end and prove the pipeline works — e.g., a bot that simply
+  clicks a pseudo-random screen-X position at pseudo-random intervals. This is
+  explicitly a placeholder. Do not design sophisticated navigation/exploration
+  policies — real bot behavior will be specified in a future, separate prompt.
+  Design the bot-input interface cleanly (a simple function/API that yields a
+  normalized screen-X value or "no new click" per simulated frame) so that a
+  smarter bot can be swapped in later without touching engine internals.
+
+9.3 Shared-core-logic requirement
+  The world generation (Section 5), control/spline/jerk resolution logic
+  (Section 6), and fixed-timestep simulation (Section 7) must be implemented
+  ONCE, as shared core modules used identically by both modes above. The two
+  modes should differ only in: where input comes from (real mouse vs.
+  scripted), and where output goes (a visible canvas vs. frames+labels written
+  to disk). Do not implement the simulation or control logic twice.
+
+--------------------------------------------------------------------------------
+10. DATA OUTPUT / TRAINING LABELS
+--------------------------------------------------------------------------------
+This dataset is the actual deliverable of headless mode, and it will be
+consumed later by a completely separate (future, out of scope) Python/PyTorch
+codebase, which you will not be able to coordinate with directly — so the
+format must be simple, self-describing, and unambiguous.
+
+10.1 Directory / episode structure
+  Each independent scripted playthrough ("episode") writes to its own
+  subdirectory under the configured output root, e.g.:
+    /data/episode_<uuid>/
+      frames/
+        000000.png
+        000001.png
+        ...
+      manifest.json
+
+10.2 Per-frame record schema
+  manifest.json should contain, at minimum:
+    - episode-level metadata: a generated episode ID, the RENDER_RESOLUTION
+      and OUTPUT_RESOLUTION used, the simulated timestep used, the config
+      values for jerk threshold / hallway & room size ranges / doorway
+      spacing / debounce (i.e., enough config context that this episode's
+      data is self-describing even in isolation)
+    - a per-frame array, one entry per generated frame, each containing at
+      least:
+        - frame index
+        - simulated timestamp (frame index * simulated timestep)
+        - path to the corresponding frame image
+        - the held control signal value for that frame (normalized
+          screen-space click-X, per Section 6.1)
+      Additionally include, purely for debugging/QA purposes (NOT intended to
+      be fed to the neural network, just useful for verifying the engine is
+      behaving correctly): player world-space position, heading, and an
+      identifier for the current entity (hallway/room) the player occupies.
+  Save frames as PNG (lossless) — do not use JPEG for training data, since
+  compression artifacts would introduce noise unrelated to the actual scene.
+
+10.3 Minimal placeholder bot
+  Covered in 9.2 — restated here because it directly produces this output: the
+  placeholder bot's job for this build is simply to prove the above pipeline
+  works correctly end-to-end, producing well-formed episodes with correct,
+  consistent manifests.
+
+--------------------------------------------------------------------------------
+11. PARALLELISM AND GPU USAGE
+--------------------------------------------------------------------------------
+
+11.1 GPU acceleration requirement for headless capture
+  By default, headless Chromium often falls back to a software rasterizer
+  (e.g. SwiftShader) rather than using the real GPU, which would make
+  large-scale data generation far too slow to be useful. You must explicitly
+  verify and configure headless Chromium/Puppeteer to use real GPU-accelerated
+  rendering (appropriate launch flags, e.g. enabling GPU rasterization and
+  avoiding flags that disable GPU usage) and include a startup self-check that
+  confirms GPU acceleration is actually active (not silently falling back to
+  software rendering) — fail loudly and clearly if it is not, rather than
+  silently running slow.
+
+11.2 Worker pool / concurrency
+  Implement a configurable worker pool that can run multiple headless browser
+  instances concurrently on a single machine/GPU, each independently running
+  an episode and writing its own output directory. Expose the concurrency
+  level (number of simultaneous instances) as a config/CLI parameter with a
+  conservative default (e.g. 4), since many instances will be contending for
+  the same GPU's memory and compute — document in the README that this value
+  should be tuned upward/downward experimentally based on the available
+  machine's GPU memory and observed throughput. It is fine, and expected, for
+  large-scale data generation to take a long time in real wall-clock terms —
+  what matters is that each individual episode's simulated motion is correct
+  and consistent (per Section 7), not that generation itself happens quickly.
+
+--------------------------------------------------------------------------------
+12. MULTI-AGENT BUILD ORGANIZATION
+--------------------------------------------------------------------------------
+Use the Task tool to delegate work rather than implementing everything
+yourself serially. Structure delegation as follows.
+
+12.1 Orchestrator (you)
+  Read this entire document, produce an internal build plan breaking the work
+  into the subsystems below, delegate each to an implementation subagent,
+  integrate their output into the single repo structure from Section 3, and
+  perform the final verification pass in 12.5 yourself before declaring the
+  build complete.
+
+12.2 Implementation subagents — spawn using the Opus model for each
+  Decompose implementation work along these subsystem boundaries (merge two of
+  these into one subagent if you judge that simpler, but do not have a single
+  subagent attempt all of them at once):
+    (a) World generation — Section 5: the procedural hallway/room generator,
+        entity lifecycle (lazy generation + disposal), and all geometric rule
+        enforcement.
+    (b) Rendering and aesthetics — Section 8: scene construction, materials,
+        lighting/flicker, the fog/darkness doorway-blackout effect, the
+        resolution/downsampling pipeline.
+    (c) Input and control — Section 6: point-and-click resolution algorithm,
+        spline motion, jerk limiting, debounce, click visual feedback.
+    (d) Data pipeline and parallelism — Sections 9, 10, 11: the two operating
+        modes, the shared-core-logic requirement, dataset/manifest output, the
+        headless worker pool, and the GPU-acceleration self-check.
+  Each implementation subagent should write its own unit/integration tests
+  where applicable (especially subsystem (a) — see 12.4) and report back to
+  you with what it built and any open questions or deviations.
+
+12.3 Visual QA subagent — spawn using the Sonnet model (this model has vision
+     capability; use it specifically for this reason)
+  This subagent's job is to periodically capture screenshots (and short
+  frame sequences, to check motion smoothness) from both the human-play build
+  and from sample headless-generated episodes, and judge them against this
+  checklist:
+    - Does it read as "backrooms"-style: plain, clean, slightly unsettling,
+      institutional, NOT sparse/placeholder-looking?
+    - Do materials tile seamlessly, with no obvious stretching, seams, or
+      scale mismatches?
+    - Does the fog/darkness effect at second-degree doorways look convincing
+      and intentional, not like a rendering bug or an obviously-flat black
+      rectangle?
+    - Does lighting/flicker look atmospheric rather than broken or
+      distracting?
+    - Across a short sequence of frames, does motion look smooth and
+      continuous, with no visible snapping/popping at spline retargets?
+    - At the configured OUTPUT_RESOLUTION, is the scene still legible (walls,
+      doorways, and openings clearly distinguishable), or is downsampling
+      destroying too much detail?
+  Report pass/fail with specific notes per item. You (the orchestrator) must
+  act on this feedback — loop back to the relevant implementation subagent for
+  fixes — before proceeding to final verification.
+
+12.4 Automated rule-verification tests (NOT an agent — plain code)
+  Write a deterministic, non-LLM automated test suite that generates many
+  sample worlds and programmatically verifies, for each:
+    - All hallway-to-hallway direction changes are exactly 90 degrees
+    - Hallway width is constant
+    - Room width/depth/height fall within configured ranges
+    - No two doorways on the same wall/side violate the minimum-spacing rule
+    - Every generated room has at least 2 doorways
+    - No hallway-to-hallway connection exists other than via a bend/junction
+      (i.e., no side doorway in a hallway ever leads directly to another
+      hallway)
+  This should run as part of your own verification pass (12.5), not be left
+  as a manual/visual check — these are exact, checkable rules and should be
+  tested as such rather than delegated to agent judgment.
+
+12.5 Final self-verification / acceptance checklist
+  Before declaring the build complete, you (the orchestrator) must confirm
+  all of the following, and should re-run/re-check rather than assume:
+    [ ] Automated rule-verification tests (12.4) all pass
+    [ ] Visual QA subagent (12.3) has signed off with no outstanding issues
+    [ ] Human-interactive mode runs via the Vite dev server and is actually
+        playable with mouse-driven point-and-click navigation
+    [ ] Headless mode runs via Puppeteer, confirms real GPU acceleration is
+        active (not falling back to software rendering), and successfully
+        produces at least a handful of complete sample episodes using the
+        placeholder bot
+    [ ] Changing only OUTPUT_RESOLUTION in config changes output resolution
+        everywhere, with no other code changes required
+    [ ] A sample generated episode's manifest.json is well-formed, matches
+        the schema in 10.2, and its recorded control-signal values
+        correspond to what was actually fed in
+    [ ] Worker-pool concurrency is configurable and multiple episodes can run
+        in parallel successfully
+    [ ] The /neural directory exists as an untouched placeholder
+    [ ] README.md at the repo root clearly explains the two-phase
+        architecture, how to run both modes, and documents every config
+        value and any judgment calls you made along the way
+
+--------------------------------------------------------------------------------
+13. EXPLICIT OUT-OF-SCOPE ITEMS — DO NOT BUILD THESE NOW
+--------------------------------------------------------------------------------
+  - Any neural network code, training loop, or model architecture of any kind
+  - Sophisticated/intelligent bot walking policies (only the minimal
+    placeholder bot described in 9.2 is in scope)
+  - Pulling random textures or 3D props from the internet
+  - Any "world blending" / DeepDream-style / multi-biome morphing features
+  - Persistent per-room memory/conditioning signals of any kind
+  - Any code that assumes or depends on the classical engine running
+    alongside a trained neural model — this engine must remain fully
+    independent and is understood to be discarded after it has served its
+    purpose of generating training data
+
+--------------------------------------------------------------------------------
+14. DEFINITION OF DONE
+--------------------------------------------------------------------------------
+This build is complete when every item in the Section 12.5 checklist is
+checked, the repository is in a clean, committed state, and a human could
+clone the repo, run the human-play mode and immediately play through a
+procedurally generated backrooms-style maze using point-and-click navigation,
+and separately run the headless mode and get back a directory of well-formed
+training episodes.
