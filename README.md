@@ -62,6 +62,32 @@ canvas steers toward the doorway whose on-screen X position is nearest the
 click (only the click's X is used). Clicking near the screen center continues
 straight ahead. A fading pulse marks every click.
 
+### Human playtest recording
+
+```bash
+cd engine
+npm run record      # opens a headful Chrome window at record.html; play, press Q to save
+```
+
+`npm run record` launches a **headful** Chromium window driving the same shared
+`Engine` with a real mouse, and streams every simulated frame (full state +
+PNG) back over the Puppeteer bridge to disk as `data/playtest_<timestamp>/` —
+the same shape as a headless training episode, plus richer per-frame debug
+fields (target doorway/phase, candidate reachability, collision events, wall
+overlap). It's the tool for reproducing a human-discovered bug: the manifest
+records the world `seed` and the exact per-frame click sequence, which a test
+or replay script can drive deterministically.
+
+```bash
+npm run record -- --help       # full option list
+npm run record -- --seed 123   # pin the world seed
+npm run record -- --build      # force a vite build even if dist/ is current
+```
+
+Press **Q** (or Escape) to finish and save; closing the window keeps whatever
+was last drained. The recorder auto-rebuilds `dist/` when source/config is newer
+than the built bundle (see `src/headless/stale.ts`).
+
 ## Headless data generation
 
 ```bash
@@ -156,29 +182,36 @@ values and their defaults:
 | Constant | Default | Controls |
 |---|---|---|
 | `SIM_TIMESTEP` | 1/20 s | fixed simulated timestep (20 Hz) |
-| `WALK_SPEED` | 2.0 | forward speed, world units/s |
+| `WALK_SPEED` | 4.0 | forward speed, world units/s |
 | `EYE_HEIGHT` | 1.6 | camera height (fixed regardless of room height) |
 | `FOV_HORIZONTAL_DEG` | 85 | horizontal field of view |
-| `HALLWAY_WIDTH` / `HALLWAY_HEIGHT` | 4.0 / 3.0 | corridor width / ceiling height |
-| `HALLWAY_LENGTH_MIN` / `_MAX` | 8 / 24 | segment length range |
+| `HALLWAY_WIDTH` / `HALLWAY_HEIGHT` | 4.5 / 3.5 | corridor width / ceiling height |
+| `HALLWAY_LENGTH_MIN` / `_MAX` | 8 / 30 | segment length range |
 | `HALLWAY_TERMINATION_WEIGHTS` | bend .35 / junction .35 / room .30 | how segments end |
 | `JUNCTION_WEIGHTS` | 2-way .45 / 3-way .40 / 4-way .15 | fork arity |
-| `ROOM_WIDTH/DEPTH_MIN/MAX` | 4–10 | room footprint ranges |
-| `ROOM_HEIGHT_MIN/MAX` | 2.5–5 | room ceiling range |
-| `DOORWAY_WIDTH` / `_HEIGHT` | 2.0 / 2.2 | opening size |
-| `DOORWAY_SPACING_FACTOR` | 2.5 | min center-to-center = 2.5× doorway width |
-| `DOORWAY_GATE_RADIUS` | 1.25 | proximity to commit to turning through a doorway |
+| `HALLWAY_SIDE_DOORWAY_CHANCE` | 0.6 | probability a segment has any side doorways |
+| `ROOM_WIDTH/DEPTH_MIN/MAX` | 10–20 | room footprint ranges |
+| `ROOM_HEIGHT_MIN/MAX` | 2.8–15 | room ceiling range (min ≥ `DOORWAY_HEIGHT`) |
+| `WALL_THICKNESS` | 0.5 | outward wall extrusion (doorway reveal; never changes walkable space) |
+| `DOORWAY_WIDTH` / `_HEIGHT` | 2.7 / 2.8 | opening size |
+| `DOORWAY_SPACING_FACTOR` | 3 | min center-to-center = 3× doorway width |
+| `SIDE_DOORWAY_START_CLEARANCE` | 3.0 | distance from entry wall before the first side doorway |
+| `DOORWAY_GATE_RADIUS` | 2.5 | proximity to commit to turning through a normal doorway |
 | `TURN_GATE_RADIUS` | 2.5 | proximity to a bend corner to commit to the ~90° turn |
-| `DOORWAY_TURN_GATE_RADIUS` | 1.5 | turn gate radius for tight 2-wide turns (side doorways, junction turns) |
+| `DOORWAY_TURN_GATE_RADIUS` | 1.5 | turn gate radius for tight turns (side doorways, junction turns) |
 | `TURN_WAYPOINT_DEPTH` | 3.0 | how far past a turn corner/opening its waypoint sits |
 | `JERK_THRESHOLD` | 6.0 rad/s² | max angular acceleration ("jerk") |
 | `MAX_TURN_RATE` | 2.5 rad/s | soft cap on turn rate (see judgment calls) |
+| `TURN_RATE_GAIN` | 3.0 (1/s) | proportional steering gain (turn rate = gain × heading error) |
+| `REACHABILITY_MAX_ANGLE_DEG` | 75 | front-cone half-angle for reachability |
 | `DEBOUNCE_SECONDS` | 0.150 | min time between accepted re-targets |
 | `CLICK_PULSE_SECONDS` | 0.400 | click pulse fade duration |
 | `RENDER_SCALE` | 4 | supersampling multiplier |
 | `OUTPUT_WIDTH` / `_HEIGHT` | 320 / 240 | final frame resolution |
-| `FOG_NEAR` / `FOG_FAR` | 8 / 40 | fog range |
-| `FLICKER_*` | on, 9 Hz, 0.08 | subtle light flicker |
+| `FOG_NEAR` / `FOG_FAR` | 4 / 12 | fog range |
+| `FLICKER_ENABLED` / `_FREQUENCY_HZ` / `_INTENSITY` | false / 9 / 0.08 | subtle light flicker (currently off) |
+| `LIGHT_SPACING` | 5.0 | overhead fixture spacing (world units) |
+| `FIXTURE_LIGHT_INTENSITY` / `AMBIENT_LIGHT_INTENSITY` | 3.6 / 0.35 | point-light / ambient floor brightness |
 | `WORKER_CONCURRENCY` | 4 | headless instance count |
 | `EPISODE_FRAMES` | 600 | default frames per episode |
 
@@ -209,7 +242,7 @@ node node_modules/vitest/vitest.mjs run      # all tests
 Where the spec left a decision to engineering judgment, these choices were made
 and are documented here rather than as scattered magic numbers:
 
-- **Hallway ceiling height** (`HALLWAY_HEIGHT = 3.0`) — the spec fixes room
+- **Hallway ceiling height** (`HALLWAY_HEIGHT = 3.5`) — the spec fixes room
   ceiling ranges but is silent on hallway height; kept constant.
 - **`MAX_TURN_RATE`** — an additional soft cap on turn rate beyond the mandated
   jerk threshold, so turning never becomes unrealistically fast during a long
@@ -217,7 +250,10 @@ and are documented here rather than as scattered magic numbers:
   `sign(err)·sqrt(2·jerk·|err|)`.
 - **Reachability** — an approximate, conservative geometric feasibility test
   (front-cone angle + required-arc-length check); it is intentionally
-  hand-tunable via `REACHABILITY_MAX_ANGLE_DEG`.
+  hand-tunable via `REACHABILITY_MAX_ANGLE_DEG`. Candidates are projected and
+  reachability-tested against a doorway's **approach point** (the corner for a
+  bend, the opening center otherwise) — never its `entryPoint`, whose waypoint
+  sits past the corner and can falsely fail the front cone (see CHANGES-LOG).
 - **Episode length** — `EPISODE_FRAMES = 600` (30 simulated seconds) by
   default; CLI-overridable.
 - **Second-degree doorways** — implemented with deterministic solid black quads
@@ -274,11 +310,11 @@ and are documented here rather than as scattered magic numbers:
 - **Tight turns use a smaller gate** — a bend turns through a full-width opening
   (the child corridor has no wall at the corner), so it commits early at
   `TURN_GATE_RADIUS` (2.5). A side doorway or junction turn threads a
-  `DOORWAY_WIDTH` (2) opening with wall on both sides; committing that early turns
+  `DOORWAY_WIDTH` (2.7) opening with wall on both sides; committing that early turns
   the player toward the wall beside the opening, and they penetrate it at a shallow
-  (~28–45°) diagonal and clip the wall perpendicular to the doorway. Those set
-  `doorwayTurnGateRadius` (1.5), committing late enough that the turn arc stays
-  inside the 2-wide opening and the player crosses essentially perpendicular to it.
+  diagonal and clip the wall perpendicular to the doorway. Those set
+  `DOORWAY_TURN_GATE_RADIUS` (1.5), committing late enough that the turn arc stays
+  inside the opening and the player crosses essentially perpendicular to it.
 
 ## Out of scope (Phase 1)
 

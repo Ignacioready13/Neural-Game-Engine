@@ -86,7 +86,16 @@ function addQuad(
   geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
   geo.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
   geo.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
-  geo.setIndex([0, 1, 2, 0, 2, 3]);
+  // Normalize winding against the intended normal: the front face (visible
+  // under THREE.FrontSide) must wind so its geometric normal points along
+  // `normal`. Callers pass corners in an arbitrary but consistent order — some
+  // walls (and the floor/ceiling) were historically wound opposite their normal
+  // and only looked right because the material was DoubleSide — so flip the
+  // triangles here when the winding opposes `normal`.
+  const e1 = new THREE.Vector3().subVectors(corners[1]!, corners[0]!);
+  const e2 = new THREE.Vector3().subVectors(corners[2]!, corners[0]!);
+  const winding = new THREE.Vector3().crossVectors(e1, e2);
+  geo.setIndex(winding.dot(normal) >= 0 ? [0, 1, 2, 0, 2, 3] : [0, 2, 1, 0, 3, 2]);
   group.add(new THREE.Mesh(geo, mat));
 }
 
@@ -132,14 +141,96 @@ function wallPiece(
   addQuad(group, mat, corners, normal, uv);
 }
 
-function buildWall(group: THREE.Group, mat: THREE.Material, seg: WallSeg): void {
+/** World-space point on a wall, given its (span, y, fixed) coordinates. */
+function wallPoint(seg: WallSeg, span: number, y: number, fixed: number): THREE.Vector3 {
+  return seg.constX
+    ? new THREE.Vector3(fixed, y, span)
+    : new THREE.Vector3(span, y, fixed);
+}
+
+/** The wall's fixed-axis coordinate moves OUTWARD (opposite `seg.normal`, into
+ * the void) by `thickness`. Returns [inner, outer] fixed coordinates. */
+function wallThicknessRange(seg: WallSeg, thickness: number): [number, number] {
+  const normalFixed = seg.constX ? seg.normal.x : seg.normal.z;
+  const inner = seg.fixed;
+  const outer = seg.fixed - normalFixed * thickness;
+  return [inner, outer];
+}
+
+/** Vertical jamb face at `span`, spanning [y0, y1], facing `dir` along the span
+ * axis (into the opening). This is what makes a doorway read as having wall
+ * thickness when the player walks through. */
+function addJamb(
+  group: THREE.Group,
+  mat: THREE.Material,
+  seg: WallSeg,
+  span: number,
+  y0: number,
+  y1: number,
+  thickness: number,
+  dir: 1 | -1,
+): void {
+  const [inner, outer] = wallThicknessRange(seg, thickness);
+  const corners = [
+    wallPoint(seg, span, y0, inner),
+    wallPoint(seg, span, y0, outer),
+    wallPoint(seg, span, y1, outer),
+    wallPoint(seg, span, y1, inner),
+  ];
+  const normal = seg.constX ? new THREE.Vector3(0, 0, dir) : new THREE.Vector3(dir, 0, 0);
+  const uv = corners.map((c) =>
+    new THREE.Vector2((seg.constX ? c.x : c.z) / TILE_WORLD_SIZE, c.y / TILE_WORLD_SIZE),
+  );
+  addQuad(group, mat, corners, normal, uv);
+}
+
+/** Underside of a lintel (the top of a doorway opening), facing down into the
+ * opening. */
+function addLintel(
+  group: THREE.Group,
+  mat: THREE.Material,
+  seg: WallSeg,
+  spanA: number,
+  spanB: number,
+  y: number,
+  thickness: number,
+): void {
+  const [inner, outer] = wallThicknessRange(seg, thickness);
+  const corners = [
+    wallPoint(seg, spanA, y, inner),
+    wallPoint(seg, spanB, y, inner),
+    wallPoint(seg, spanB, y, outer),
+    wallPoint(seg, spanA, y, outer),
+  ];
+  const normal = new THREE.Vector3(0, -1, 0);
+  const uv = corners.map((c) =>
+    new THREE.Vector2(
+      (seg.constX ? c.z : c.x) / TILE_WORLD_SIZE,
+      (seg.constX ? c.x : c.z) / TILE_WORLD_SIZE,
+    ),
+  );
+  addQuad(group, mat, corners, normal, uv);
+}
+
+function buildWall(group: THREE.Group, mat: THREE.Material, seg: WallSeg, thickness: number): void {
   const sorted = seg.openings.slice().sort((a, b) => a.center - b.center);
   let cursor = seg.spanMin;
   for (const o of sorted) {
     const l = Math.max(o.center - o.width / 2, seg.spanMin);
     const r = Math.min(o.center + o.width / 2, seg.spanMax);
     if (l > cursor) wallPiece(group, mat, seg, cursor, l, 0, seg.height);
-    if (!o.full && r > l) wallPiece(group, mat, seg, l, r, o.height, seg.height);
+    if (r > l) {
+      // Wall thickness: the two jambs (opening sides) and, for a normal-height
+      // doorway, the lintel underside. Extruded outward (into the void) so they
+      // never narrow the opening or change floor-based collision.
+      const jambTop = o.full ? seg.height : o.height;
+      addJamb(group, mat, seg, l, 0, jambTop, thickness, 1); // left jamb, faces +span
+      addJamb(group, mat, seg, r, 0, jambTop, thickness, -1); // right jamb, faces -span
+      if (!o.full) {
+        addLintel(group, mat, seg, l, r, o.height, thickness); // lintel underside
+        wallPiece(group, mat, seg, l, r, o.height, seg.height);
+      }
+    }
     cursor = Math.max(cursor, r);
   }
   if (cursor < seg.spanMax) wallPiece(group, mat, seg, cursor, seg.spanMax, 0, seg.height);
@@ -229,6 +320,7 @@ function buildRoom(
   group: THREE.Group,
   mats: WorldMaterials,
   desc: EntityDescriptor,
+  config: EngineConfig,
 ): void {
   const c = desc.center!;
   const w = desc.width!;
@@ -259,7 +351,7 @@ function buildRoom(
   }
 
   for (const wall of walls) {
-    buildWall(group, mats.wall, wall.seg);
+    buildWall(group, mats.wall, wall.seg, config.wallThickness);
   }
 }
 
@@ -291,9 +383,9 @@ function buildJunctionNode(
     const seg = dw.facing === frontDir ? front : dw.facing === leftDir ? leftSeg : rightSeg;
     seg.openings.push({ center: spanCoord({ x: dw.x, z: dw.z }, seg.constX), width: dw.width, height: dw.height, full: false });
   }
-  buildWall(group, mats.wall, front);
-  buildWall(group, mats.wall, leftSeg);
-  buildWall(group, mats.wall, rightSeg);
+  buildWall(group, mats.wall, front, config.wallThickness);
+  buildWall(group, mats.wall, leftSeg, config.wallThickness);
+  buildWall(group, mats.wall, rightSeg, config.wallThickness);
 }
 
 function buildHallway(
@@ -371,8 +463,8 @@ function buildHallway(
     });
   }
 
-  buildWall(group, mats.wall, sideWallSeg(s, e, leftVec, W, H, leftOpen));
-  buildWall(group, mats.wall, sideWallSeg(s, e, rightVec, W, H, rightOpen));
+  buildWall(group, mats.wall, sideWallSeg(s, e, leftVec, W, H, leftOpen), config.wallThickness);
+  buildWall(group, mats.wall, sideWallSeg(s, e, rightVec, W, H, rightOpen), config.wallThickness);
 
   // Start wall (skipped when coplanar with a parent wall).
   if (!opts.skipEntryWall) {
@@ -386,7 +478,7 @@ function buildHallway(
         full,
       });
     }
-    buildWall(group, mats.wall, crossWallSeg(s, vecScale(dirVec, -1), W, H, openings));
+    buildWall(group, mats.wall, crossWallSeg(s, vecScale(dirVec, -1), W, H, openings), config.wallThickness);
   }
 
   // Termination.
@@ -398,6 +490,7 @@ function buildHallway(
       crossWallSeg(e, dirVec, W, H, [
         { center: spanCoord({ x: endDway.x, z: endDway.z }, dirVec.x !== 0), width: endDway.width, height: endDway.height, full: false },
       ]),
+      config.wallThickness,
     );
   } else if (desc.termination === 'bend') {
     const bend = endDways[0]!;
@@ -415,7 +508,7 @@ function buildHallway(
       height: H,
       normal: { x: -dirVec.x, z: -dirVec.z },
       openings: [],
-    });
+    }, config.wallThickness);
   } else {
     buildJunctionNode(group, mats, desc, config);
   }
@@ -430,7 +523,7 @@ export function buildEntityGroup(
   const group = new THREE.Group();
   const mats = createMaterials();
   if (descriptor.kind === 'room') {
-    buildRoom(group, mats, descriptor);
+    buildRoom(group, mats, descriptor, config);
   } else {
     buildHallway(group, mats, descriptor, config, opts);
   }

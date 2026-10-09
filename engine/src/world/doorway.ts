@@ -101,12 +101,20 @@ export interface SidePlacementOpts {
   startClearance: number;
   /** How far from the corridor end the last doorway must stay. */
   endClearance: number;
+  /** For a bend: the side the child corridor turns onto. Rooms on that side must
+   * keep W/2 clear of the end so they don't overlap the crossing corridor. */
+  turnSide?: 'left' | 'right' | null;
+  /** For a hallway that entered via a bend: the side the parent corridor lies
+   * on. Rooms on that side must keep W/2 clear of the start. */
+  startCorridorSide?: 'left' | 'right';
 }
 
 /**
  * Greedily place hallway side doorways (side = 'left' | 'right') at random
- * positions, keeping every pair on a given side at least `minSpacing` apart
- * center-to-center. Returns [] when the hallway rolls no side doorways.
+ * positions, keeping every pair on a given side at least `max(minSpacing,
+ * minAlong)` apart center-to-center so each side room's corridor cell is at
+ * least its minimum along-dimension. Returns [] when the hallway rolls no side
+ * doorways, or when a side's usable cell is too short to fit any room.
  */
 export function placeSideDoorways(
   ids: Ids,
@@ -124,20 +132,49 @@ export function placeSideDoorways(
 
   const length = vecLen(vecSub(opts.end, opts.start));
   const dw = config.doorwayWidth;
-  const spacing = minSpacing(config);
   const halfW = config.hallwayWidth / 2;
-  // Doorway centers must keep the full opening inside [startClearance, length - endClearance].
-  const spanMin = Math.max(opts.startClearance, dw / 2);
-  const spanMax = Math.max(spanMin, length - opts.endClearance - dw / 2);
+  // A side-doorway room's "along" dimension runs parallel to the corridor:
+  // width for E/W travel, depth for N/S travel. Its cell (the corridor span it
+  // must fit in) must be at least this big, otherwise generateRoom would shrink
+  // the room below its configured minimum (or degenerate the offset region and
+  // poke out of its cell). Spacing + end/start clearances derive from it.
+  const minAlong =
+    opts.travelDir === 'east' || opts.travelDir === 'west'
+      ? config.roomWidthMin
+      : config.roomDepthMin;
+  // Consecutive doorways must be at least `minAlong` apart (not just
+  // `minSpacing`), so every interior midpoint-split cell is >= minAlong.
+  const spacing = Math.max(minSpacing(config), minAlong);
 
   const result: Doorway[] = [];
-  const sides: Array<{ normal: Vec2; cardinal: Cardinal }> = [
-    { normal: leftVec, cardinal: left },
-    { normal: rightVec, cardinal: right },
+  const sides: Array<{ normal: Vec2; cardinal: Cardinal; side: 'left' | 'right' }> = [
+    { normal: leftVec, cardinal: left, side: 'left' },
+    { normal: rightVec, cardinal: right, side: 'right' },
   ];
   for (const side of sides) {
-    let t = spanMin + rng() * Math.min(dw, Math.max(0, spanMax - spanMin));
-    while (t <= spanMax) {
+    // A perpendicular corridor crosses one of this hallway's ends on one side
+    // (a bend's turn side at the END; a bend child's parent side at the START),
+    // reaching W/2 back into this hallway. A side room on that side must keep
+    // W/2 clear of that end (mirrors generateNeighbor's backOffCorner logic).
+    const startBackOff = opts.startCorridorSide === side.side ? halfW : 0;
+    const endBackOff = opts.turnSide === side.side ? halfW : 0;
+    // The cell a single room can occupy must be >= minAlong, else no room fits
+    // and any doorway we cut here would produce an overlapping/undersized room.
+    const cellLength = length - startBackOff - endBackOff;
+    if (cellLength < minAlong) continue;
+    // Doorway centers must (a) sit far enough from the entry wall for the player
+    // to steer into the first one (startClearance), (b) keep the first/last
+    // room's cell >= minAlong (back-off + minAlong/2), and (c) keep the full
+    // opening inside the corridor. dw/2 terms are defensive if minAlong < dw.
+    const tMin = Math.max(opts.startClearance, startBackOff + dw / 2, startBackOff + minAlong / 2);
+    const tMax = Math.min(
+      length - opts.endClearance,
+      length - endBackOff - dw / 2,
+      length - endBackOff - minAlong / 2,
+    );
+    if (tMax < tMin) continue;
+    let t = tMin + rng() * Math.min(spacing, tMax - tMin);
+    while (t <= tMax) {
       const center = vecAdd(opts.start, vecScale(dirVec, t));
       const pos = vecAdd(center, vecScale(side.normal, halfW));
       // A side doorway is approached from the corridor: steer at its opening
@@ -152,7 +189,7 @@ export function placeSideDoorways(
           width: dw,
           height: config.doorwayHeight,
           facing: side.cardinal,
-          side: side.cardinal === left ? 'left' : 'right',
+          side: side.side,
           targetEntityId: '',
           targetGenerated: false,
         }),

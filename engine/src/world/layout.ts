@@ -102,6 +102,10 @@ export interface HallwayOpts {
   entryPos?: Vec2;
   /** Extra clearance between the entry wall and the first side doorway. */
   startClearance?: number;
+  /** For a bend child: which side (relative to this hallway's travel direction)
+   * the parent corridor lies on. Side rooms on that side back off W/2 from the
+   * start so they don't poke back into the parent corridor. */
+  startCorridorSide?: 'left' | 'right';
 }
 
 export function generateHallway(
@@ -119,6 +123,17 @@ export function generateHallway(
   const W = config.hallwayWidth;
   const end = vecAdd(start, vecScale(dirVec, length));
   const doorways: Doorway[] = [];
+
+  // Pick the bend turn side up front so side-doorway placement can back that
+  // side off from the end (the child corridor crosses the end there).
+  const turnSide: 'left' | 'right' | null =
+    termination === 'bend'
+      ? pick(rng, ['left', 'right'] as const) === 'left'
+        ? 'left'
+        : 'right'
+      : null;
+  const turnDir: Cardinal | null =
+    turnSide === 'left' ? leftOf(travelDir) : turnSide === 'right' ? rightOf(travelDir) : null;
 
   if (!opts.isStart) {
     const entryPos = opts.entryPos ?? start;
@@ -149,6 +164,8 @@ export function generateHallway(
       travelDir,
       startClearance: opts.startClearance ?? config.sideDoorwayStartClearance,
       endClearance,
+      turnSide,
+      startCorridorSide: opts.startCorridorSide,
     }),
   );
 
@@ -166,9 +183,7 @@ export function generateHallway(
       }),
     );
   } else if (termination === 'bend') {
-    const turnDir: Cardinal =
-      pick(rng, ['left', 'right'] as const) === 'left' ? leftOf(travelDir) : rightOf(travelDir);
-    const turnVec = CARDINAL_VEC[turnDir];
+    const turnVec = CARDINAL_VEC[turnDir!];
     // Center of the W/2 corner opening on the turn-side wall.
     const pos = vecAdd(end, vecAdd(vecScale(turnVec, W / 2), vecScale(dirVec, -W / 4)));
     // The bend doorway is on a SIDE wall (the player drives parallel to it, not
@@ -186,7 +201,7 @@ export function generateHallway(
         z: pos.z,
         width: config.doorwayWidth,
         height: config.doorwayHeight,
-        facing: turnDir,
+        facing: turnDir!,
         side: 'end',
         targetEntityId: '',
         targetGenerated: false,
@@ -222,6 +237,7 @@ export function generateHallway(
     travelDirection: travelDir,
     corridorWidth: W,
     termination,
+    startCorridorSide: opts.startCorridorSide,
     doorways,
   };
 }
@@ -419,16 +435,18 @@ export function generateRoom(
   if (alongRange) {
     const span = alongRange.max - alongRange.min;
     if (2 * alongHalf > span) {
-      // Shrink the along dimension to fit the corridor. `span` is a corridor
-      // length (>= hallwayLengthMin), so the result stays within the room's
-      // configured dimension ranges.
-      alongHalf = span / 2;
+      // Shrink the along dimension to fit the corridor cell, but never below
+      // the configured minimum. `placeSideDoorways` guarantees every cell >=
+      // minAlong, so this clamp is defensive only; it removes the below-min
+      // path that used to produce rooms narrower/shallower than ROOM_*_MIN.
+      const minAlong = alongIsDepth ? config.roomDepthMin : config.roomWidthMin;
+      alongHalf = Math.max(span / 2, minAlong / 2);
       if (alongIsDepth) {
-        depth = span;
-        halfD = span / 2;
+        depth = 2 * alongHalf;
+        halfD = alongHalf;
       } else {
-        width = span;
-        halfW = span / 2;
+        width = 2 * alongHalf;
+        halfW = alongHalf;
       }
     }
     const baseHalf = alongHalf - dw / 2;
@@ -582,6 +600,12 @@ export function generateNeighbor(
     );
     const length = range(rng, config.hallwayLengthMin, config.hallwayLengthMax);
     const newTerm = pickTermination(rng, config);
+    // Which side of this bend child the parent corridor lies on, so its side
+    // rooms on that side back off from the start (see generateNeighbor's
+    // side-doorway branch). A left turn leaves the parent on the child's left;
+    // a right turn leaves it on the child's right.
+    const startCorridorSide: 'left' | 'right' =
+      doorway.facing === rightOf(parent.travelDirection as Cardinal) ? 'right' : 'left';
     const descriptor = generateHallway(
       ids,
       rng,
@@ -601,14 +625,9 @@ export function generateNeighbor(
         // left the gap too small (span could fall below roomDepthMin), forcing
         // a shrink below the configured minimum.
         startClearance: config.hallwayWidth / 4 + minSpacing(config) - config.doorwayWidth / 2,
+        startCorridorSide,
       },
     );
-    // Record which side of this bend child the parent corridor lies on, so its
-    // side rooms on that side back off from the start (see generateNeighbor's
-    // side-doorway branch). A left turn leaves the parent on the child's left;
-    // a right turn leaves it on the child's right.
-    descriptor.startCorridorSide =
-      doorway.facing === rightOf(parent.travelDirection as Cardinal) ? 'right' : 'left';
     return { descriptor, skipEntryWall: false, parentDir: parent.travelDirection };
   }
   // junction

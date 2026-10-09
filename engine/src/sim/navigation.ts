@@ -51,6 +51,20 @@ export function doorwayTargetPoint(
   return { x: doorway.x, z: doorway.z };
 }
 
+/** The world-space steering target while approaching a doorway (the "approach"
+ * leg, before committing to 'through'). For a turning doorway this is its
+ * approachPoint (the corner); for any other doorway it is the opening center.
+ *
+ * This is the point candidates must be projected from and reachability-tested
+ * against: it is where the player actually steers on the approach leg. Using
+ * `entryPoint` here is wrong for a bend — that is a waypoint past the corner
+ * (`TURN_WAYPOINT_DEPTH` units down the new corridor), which sits far to the
+ * side and can falsely fail the forward reachability cone, leaving the player
+ * with no target and drifting diagonally into the corridor wall. */
+export function doorwayApproachPoint(doorway: Doorway): Vec2 {
+  return doorwayTargetPoint(doorway, 'approach');
+}
+
 /** Advance the doorway phase for this frame's player position. Once committed
  * to 'through', stay there until the doorway is left behind (the engine resets
  * the phase when the target doorway changes). */

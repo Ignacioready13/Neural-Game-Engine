@@ -80,9 +80,21 @@ export const ROOM_WIDTH_MAX = 20;
 export const ROOM_DEPTH_MIN = 10;
 export const ROOM_DEPTH_MAX = 20;
 
-/** Room ceiling height range (world units), independent of footprint. */
-export const ROOM_HEIGHT_MIN = 2.5;
+/** Room ceiling height range (world units), independent of footprint.
+ * ROOM_HEIGHT_MIN must be >= DOORWAY_HEIGHT so every doorway always fits its
+ * wall (a doorway taller than its wall produces a negative-height lintel). */
+export const ROOM_HEIGHT_MIN = 2.8;
 export const ROOM_HEIGHT_MAX = 15;
+
+// ---------------------------------------------------------------------------
+// Walls
+// ---------------------------------------------------------------------------
+
+/** Wall extrusion depth (world units), visible as the doorway jamb / reveal
+ * when walking through an opening. Extrudes OUTWARD (away from the entity's
+ * interior) so it never narrows walkable space or changes floor-based
+ * collision. */
+export const WALL_THICKNESS = 0.5;
 
 // ---------------------------------------------------------------------------
 // Doorways
@@ -156,7 +168,7 @@ export const TURN_GATE_RADIUS = 2.5; //2.5
  * it parallel to the wall and must turn ~90 degrees; a waypoint this far past the
  * corner is what carries them through the turn instead of letting them penetrate
  * at a shallow diagonal and clip the new corridor's far wall. */
-export const TURN_WAYPOINT_DEPTH = 30; //3
+export const TURN_WAYPOINT_DEPTH = 3;
 
 // ---------------------------------------------------------------------------
 // Rendering / resolution pipeline
@@ -243,6 +255,8 @@ export interface EngineConfig {
   roomDepthMax: number;
   roomHeightMin: number;
   roomHeightMax: number;
+  // walls
+  wallThickness: number;
   // doorways
   doorwayWidth: number;
   doorwayHeight: number;
@@ -298,6 +312,7 @@ export const CONFIG: Readonly<EngineConfig> = Object.freeze({
   roomDepthMax: ROOM_DEPTH_MAX,
   roomHeightMin: ROOM_HEIGHT_MIN,
   roomHeightMax: ROOM_HEIGHT_MAX,
+  wallThickness: WALL_THICKNESS,
   doorwayWidth: DOORWAY_WIDTH,
   doorwayHeight: DOORWAY_HEIGHT,
   doorwaySpacingFactor: DOORWAY_SPACING_FACTOR,

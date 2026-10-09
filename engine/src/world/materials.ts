@@ -134,17 +134,17 @@ export function createMaterials(): WorldMaterials {
   const floor = new THREE.MeshStandardMaterial({
     roughness: 0.9,
     metalness: 0.0,
-    side: THREE.DoubleSide,
+    side: THREE.FrontSide,
   });
   const wall = new THREE.MeshStandardMaterial({
     roughness: 0.95,
     metalness: 0.0,
-    side: THREE.DoubleSide,
+    side: THREE.FrontSide,
   });
   const ceiling = new THREE.MeshStandardMaterial({
     roughness: 0.85,
     metalness: 0.0,
-    side: THREE.DoubleSide,
+    side: THREE.FrontSide,
   });
 
   if (HAS_DOM) {

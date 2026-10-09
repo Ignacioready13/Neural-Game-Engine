@@ -16,7 +16,7 @@ import { CONFIG } from '../config/config';
 import { World } from '../src/world/World';
 import { Steering } from '../src/control/steering';
 import { resolveWallCollision } from '../src/sim/collision';
-import { doorwayTargetPoint, doorwayPhase } from '../src/sim/navigation';
+import { doorwayApproachPoint, doorwayTargetPoint, doorwayPhase } from '../src/sim/navigation';
 import type { DoorwayPhase } from '../src/sim/navigation';
 import { CARDINAL_VEC } from '../src/core/types';
 import type { Doorway, Entity, PlayerState, Vec2 } from '../src/core/types';
@@ -47,6 +47,39 @@ function advance(
 }
 
 describe('navigation + collision', () => {
+  it('measures a bend doorway reachability against its approach point, not its waypoint', () => {
+    // Root-cause regression: a bend's entryPoint is a waypoint TURN_WAYPOINT_DEPTH
+    // units PAST the corner. Evaluated from a player approaching the corner, a
+    // large waypoint depth sits far to the side and falsely fails the ~75° front
+    // cone — the player gets no target and drifts diagonally into the wall. The
+    // candidate must instead be reachability-tested against the corner
+    // (approachPoint), which is always straight ahead along the corridor.
+    const bend: Doorway = {
+      id: 'bend',
+      x: 20,
+      z: 0,
+      width: CONFIG.hallwayWidth,
+      height: CONFIG.hallwayHeight,
+      facing: 'north',
+      side: 'right',
+      targetEntityId: 'h9',
+      targetGenerated: true,
+      // Waypoint far past the corner (the magnitude that triggered the crash).
+      entryPoint: { x: 20, z: -30 },
+      approachPoint: { x: 20, z: 0 },
+      turn: true,
+    };
+    const player = { x: 18, z: 0, heading: 0, angularVelocity: 0 };
+    const steering = new Steering(CONFIG);
+
+    expect(doorwayApproachPoint(bend)).toEqual({ x: 20, z: 0 });
+
+    // The corner is straight ahead: reachable.
+    expect(steering.isReachable(player, doorwayApproachPoint(bend))).toBe(true);
+    // The far waypoint is ~86° off heading: outside the front cone.
+    expect(steering.isReachable(player, bend.entryPoint)).toBe(false);
+  });
+
   it('never leaves the floor while wandering and turning into doorways', () => {
     for (const seed of [1, 2, 3, 4, 5, 6, 7, 8]) {
       const world = new World(seed, CONFIG, { buildGeometry: false });

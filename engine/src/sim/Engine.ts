@@ -30,7 +30,7 @@ import { World } from '../world/World';
 import { Steering } from '../control/steering';
 import { Renderer } from '../render/Renderer';
 import { resolveWallCollision } from './collision';
-import { doorwayPhase, doorwayTargetPoint } from './navigation';
+import { doorwayApproachPoint, doorwayPhase, doorwayTargetPoint } from './navigation';
 import type { DoorwayPhase } from './navigation';
 
 interface Pulse {
@@ -251,16 +251,22 @@ export class Engine {
     const out: CandidateDoorway[] = [];
     const reference = this.steering.lastClickedX ?? 0;
     for (const d of active.descriptor.doorways) {
+      // Candidates are evaluated against the doorway's APPROACH point (the
+      // corner for a bend, the opening center otherwise) — the point the player
+      // steers toward on the approach leg. Evaluating against `entryPoint` is
+      // wrong for a bend: its entryPoint is a waypoint past the corner, which
+      // sits far to the side and can falsely fail the forward reachability cone.
+      const approach = doorwayApproachPoint(d);
       const sx = this.renderer.projectToScreenX(
-        d.entryPoint.x,
-        d.entryPoint.z,
+        approach.x,
+        approach.z,
         this.config.eyeHeight,
       );
       if (sx === null) continue;
       out.push({
         doorwayId: d.id,
         screenX: sx,
-        reachable: this.steering.isReachable(this.player, d.entryPoint),
+        reachable: this.steering.isReachable(this.player, approach),
         screenDistance: Math.abs(sx - reference),
       });
     }

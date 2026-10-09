@@ -22,7 +22,9 @@ export class BlackoutManager {
    * black even deep inside the fog; MeshBasicMaterial never responds to light. */
   private readonly material = new THREE.MeshBasicMaterial({
     color: 0x000000,
-    side: THREE.DoubleSide,
+    // FrontSide (the MeshBasicMaterial default) so the fill is only visible from
+    // the current entity looking into the neighbor's doorway — never from the
+    // far side. Kept explicit-by-omission: no `side` means FrontSide.
     fog: false,
   });
 
@@ -60,7 +62,7 @@ function buildBlackoutQuad(doorway: Doorway, material: THREE.MeshBasicMaterial):
   const xAxis = new THREE.Vector3(wallDir.x, 0, wallDir.z);
   const yAxis = new THREE.Vector3(0, 1, 0);
   // Front face points back toward the player (-facing), so the fill is visible
-  // from inside the current entity. DoubleSide makes orientation moot anyway.
+  // from inside the current entity (and culled from the far side).
   const zAxis = new THREE.Vector3(-facing.x, 0, -facing.z);
   mesh.setRotationFromMatrix(new THREE.Matrix4().makeBasis(xAxis, yAxis, zAxis));
 
