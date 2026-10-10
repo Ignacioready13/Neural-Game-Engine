@@ -69,6 +69,10 @@ export interface Doorway {
   targetEntityId: string;
   /** True once the neighbor entity has actually been generated. */
   targetGenerated: boolean;
+  /** True for a room's entry doorway: the one it was generated through, whose
+   * wall is coplanar (back to back) with the parent hallway's wall. The parent
+   * owns that seam's wall-thickness reveal, so the room does not build one. */
+  entry?: boolean;
   /** World position the player steers toward to pass through (floor-level). For
    * a normal doorway this is just past the opening; for a bend doorway (`turn`) it
    * is a waypoint several units past the corner so the ~90 degree turn completes

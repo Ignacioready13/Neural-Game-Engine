@@ -477,6 +477,7 @@ export function generateRoom(
       side: entrySide,
       targetEntityId: parentId,
       targetGenerated: true,
+      entry: true,
     }),
     ...placeRoomDoorways(ids, rng, config, center, width, depth, entrySide, entryCoord),
   ];
@@ -681,16 +682,21 @@ export function containsPoint(
   const perp = (v: Vec2) => (axis === 'x' ? v.z : v.x);
   let a0 = Math.min(along(s), along(e));
   let a1 = Math.max(along(s), along(e));
-  if (desc.termination === 'junction') {
-    // The W x W junction node sits PAST the corridor end, in the travel
-    // direction. Extend whichever bound is the corridor's END (not always +a1:
-    // a north/west-traveling corridor's end is its lower bound). Extending the
-    // wrong bound left the node unreachable (an invisible wall at the end) and
-    // even attributed it to a spurious region behind the start.
+  if (desc.termination === 'junction' || desc.termination === 'bend') {
+    // A junction's W x W node, and a bend's outer-corner square, sit PAST the
+    // corridor end, in the travel direction. Extend whichever bound is the
+    // corridor's END (not always +a1: a north/west-traveling corridor's end is
+    // its lower bound). Extending the wrong bound left the node unreachable (an
+    // invisible wall at the end) and even attributed it to a spurious region
+    // behind the start.
     const dirVec = CARDINAL_VEC[desc.travelDirection as Cardinal];
     const alongDir = axis === 'x' ? dirVec.x : dirVec.z;
-    if (alongDir > 0) a1 += W;
-    else a0 -= W;
+    // Junction: the whole W x W node. Bend: only the W/2 the corridor's outer
+    // side wall was extended by (the turn-side half past the end is the child
+    // corridor, which contains it already).
+    const reach = desc.termination === 'junction' ? W : W / 2;
+    if (alongDir > 0) a1 += reach;
+    else a0 -= reach;
   }
   const p0 = perp(s) - W / 2;
   const p1 = perp(s) + W / 2;

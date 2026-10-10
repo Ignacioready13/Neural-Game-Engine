@@ -36,6 +36,10 @@ interface Opening {
   width: number;
   height: number;
   full: boolean;
+  /** False to cut the opening WITHOUT building the wall-thickness reveal (the
+   *  jambs + lintel underside) around it. Used for a room's entry doorway, whose
+   *  reveal is owned by the coplanar parent wall (see buildRoom). */
+  reveal?: boolean;
 }
 
 interface WallSeg {
@@ -223,13 +227,19 @@ function buildWall(group: THREE.Group, mat: THREE.Material, seg: WallSeg, thickn
       // Wall thickness: the two jambs (opening sides) and, for a normal-height
       // doorway, the lintel underside. Extruded outward (into the void) so they
       // never narrow the opening or change floor-based collision.
-      const jambTop = o.full ? seg.height : o.height;
-      addJamb(group, mat, seg, l, 0, jambTop, thickness, 1); // left jamb, faces +span
-      addJamb(group, mat, seg, r, 0, jambTop, thickness, -1); // right jamb, faces -span
-      if (!o.full) {
+      //
+      // Only real doorways get a reveal. A `full` opening is a bend corner: the
+      // corridor continues through it into the child corridor (whose wall is
+      // coplanar on the other side of the seam), so a jamb here would be a
+      // slab floating inside a walkable corridor — and a duplicate of the
+      // neighbour's wall. An opening with `reveal: false` is a room's entry
+      // doorway, whose reveal is built once by the coplanar parent wall.
+      if (!o.full && o.reveal !== false) {
+        addJamb(group, mat, seg, l, 0, o.height, thickness, 1); // left jamb, faces +span
+        addJamb(group, mat, seg, r, 0, o.height, thickness, -1); // right jamb, faces -span
         addLintel(group, mat, seg, l, r, o.height, thickness); // lintel underside
-        wallPiece(group, mat, seg, l, r, o.height, seg.height);
       }
+      if (!o.full) wallPiece(group, mat, seg, l, r, o.height, seg.height);
     }
     cursor = Math.max(cursor, r);
   }
@@ -293,10 +303,21 @@ function localRect(
   return { x0: Math.min(...xs), x1: Math.max(...xs), z0: Math.min(...zs), z1: Math.max(...zs) };
 }
 
-/** Bend child floor = corridor minus the shared corner square (two rects). */
+/**
+ * Bend child floor = corridor minus the shared INNER-corner square (which the
+ * parent corridor already covers), plus the OUTER-corner square W/2 back along
+ * -dirVec, which the parent corridor does NOT cover.
+ *
+ * A bend is a plain 90 degree corner, so the walkable region is the union of
+ * the two corridors. The child corridor's leading W/2 would otherwise overlap
+ * the parent's own stretch, so that half starts at a0 = W/2 (the parent floors
+ * the seam square). On the other side of the corner the parent stops at its end
+ * wall plane and the child must reach back W/2 to meet the parent's outer side
+ * wall — hence a0 = -W/2 for the outer half. The two rects touch, never overlap.
+ */
 function bendChildFloorRects(s: Vec2, dirVec: Vec2, parentDirVec: Vec2, W: number, L: number): Rect[] {
   return [
-    localRect(s, dirVec, parentDirVec, 0, L, 0, W / 2),
+    localRect(s, dirVec, parentDirVec, -W / 2, L, 0, W / 2),
     localRect(s, dirVec, parentDirVec, W / 2, L, -W / 2, 0),
   ];
 }
@@ -347,7 +368,18 @@ function buildRoom(
     const wall = walls.find((wl) => wl.side === side);
     if (!wall) continue;
     const center = side === 'north' || side === 'south' ? dw.x : dw.z;
-    wall.seg.openings.push({ center, width: dw.width, height: dw.height, full: false });
+    // The entry wall is coplanar (back to back) with the parent hallway's wall.
+    // Only ONE of the two may build the opening's reveal: the parent hallway
+    // builds it, extruding it away from its corridor into this room. Building a
+    // second one here would extrude a slab back into the hallway and double the
+    // reveal depth in the player's walkable space.
+    wall.seg.openings.push({
+      center,
+      width: dw.width,
+      height: dw.height,
+      full: false,
+      reveal: !dw.entry,
+    });
   }
 
   for (const wall of walls) {
@@ -439,9 +471,11 @@ function buildHallway(
   }));
 
   // Bend parent: full-height corner opening on the turn-side wall.
+  let turnSide: 'left' | 'right' | null = null;
   if (desc.termination === 'bend' && endDways.length > 0) {
     const bend = endDways[0]!;
     const isLeft = bend.facing === leftOf(dir);
+    turnSide = isLeft ? 'left' : 'right';
     const constX = isLeft ? leftVec.x !== 0 : rightVec.x !== 0;
     (isLeft ? leftOpen : rightOpen).push({
       center: spanCoord({ x: bend.x, z: bend.z }, constX),
@@ -451,9 +485,11 @@ function buildHallway(
     });
   }
   // Bend child: full-height corner opening on the wall toward the parent.
+  let parentSide: 'left' | 'right' | null = null;
   if (opts.parentDir && entryDway) {
     const negParent = vecScale(CARDINAL_VEC[opts.parentDir], -1);
     const isLeft = vecEq(negParent, leftVec);
+    parentSide = isLeft ? 'left' : 'right';
     const constX = isLeft ? leftVec.x !== 0 : rightVec.x !== 0;
     (isLeft ? leftOpen : rightOpen).push({
       center: spanCoord(vecAdd(s, vecScale(dirVec, W / 4)), constX),
@@ -463,19 +499,35 @@ function buildHallway(
     });
   }
 
-  buildWall(group, mats.wall, sideWallSeg(s, e, leftVec, W, H, leftOpen), config.wallThickness);
-  buildWall(group, mats.wall, sideWallSeg(s, e, rightVec, W, H, rightOpen), config.wallThickness);
+  // A bend is a plain 90 degree corner: the corridor's OUTER side wall runs W/2
+  // past the corridor end (parent) or W/2 back before the corridor start
+  // (child), so the two corridors' outer walls meet at a single convex corner
+  // instead of stopping short and leaving a stepped notch. The floor that
+  // matches the child's extension comes from bendChildFloorRects, and the
+  // parent's containsPoint reaches W/2 past its end for the same region.
+  const outerBack = W / 2;
+  const leftEnd = turnSide === 'right' ? vecAdd(e, vecScale(dirVec, outerBack)) : e;
+  const rightEnd = turnSide === 'left' ? vecAdd(e, vecScale(dirVec, outerBack)) : e;
+  const leftStart = parentSide === 'right' ? vecAdd(s, vecScale(dirVec, -outerBack)) : s;
+  const rightStart = parentSide === 'left' ? vecAdd(s, vecScale(dirVec, -outerBack)) : s;
 
-  // Start wall (skipped when coplanar with a parent wall).
-  if (!opts.skipEntryWall) {
+  // (Shifting an endpoint along the travel direction only changes the wall's
+  // span — sideWallSeg derives the wall plane from the start point's lateral
+  // offset, which is perpendicular to it.)
+  buildWall(group, mats.wall, sideWallSeg(leftStart, leftEnd, leftVec, W, H, leftOpen), config.wallThickness);
+  buildWall(group, mats.wall, sideWallSeg(rightStart, rightEnd, rightVec, W, H, rightOpen), config.wallThickness);
+
+  // Start wall (skipped when coplanar with a parent wall, and for bend children:
+  // the parent corridor's outer wall continues straight into this corridor's
+  // outer wall, so the whole seam between the two corridors is open).
+  if (!opts.skipEntryWall && !opts.parentDir) {
     const openings: Opening[] = [];
     if (entryDway) {
-      const full = opts.parentDir !== undefined;
       openings.push({
         center: spanCoord({ x: entryDway.x, z: entryDway.z }, dirVec.x !== 0),
-        width: full ? W / 2 : entryDway.width,
-        height: full ? H : entryDway.height,
-        full,
+        width: entryDway.width,
+        height: entryDway.height,
+        full: false,
       });
     }
     buildWall(group, mats.wall, crossWallSeg(s, vecScale(dirVec, -1), W, H, openings), config.wallThickness);
@@ -493,22 +545,9 @@ function buildHallway(
       config.wallThickness,
     );
   } else if (desc.termination === 'bend') {
-    const bend = endDways[0]!;
-    const turnVec = CARDINAL_VEC[bend.facing];
-    const constX = dirVec.x !== 0;
-    const p = spanCoord(e, constX);
-    const turnSpan = constX ? turnVec.z : turnVec.x;
-    const spanMin = turnSpan > 0 ? p - W / 2 : p;
-    const spanMax = turnSpan > 0 ? p : p + W / 2;
-    buildWall(group, mats.wall, {
-      constX,
-      fixed: wallCoord(e, constX),
-      spanMin,
-      spanMax,
-      height: H,
-      normal: { x: -dirVec.x, z: -dirVec.z },
-      openings: [],
-    }, config.wallThickness);
+    // No end wall: the corridor's outer half continues past the end into the
+    // bend child's corridor and its outer-corner floor square (the outer side
+    // wall extension above closes it off).
   } else {
     buildJunctionNode(group, mats, desc, config);
   }

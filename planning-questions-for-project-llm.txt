@@ -1,0 +1,374 @@
+PLANNING QUESTIONS FOR THE PROJECT LLM (READ-ONLY INVESTIGATION)
+================================================================================
+
+You have access to the full NeuralGameEngine repository. I am planning the NEXT
+build stage (bot click-policies, label hardening, and a small pilot dataset)
+and need precise, verified facts about the engine as it exists TODAY. Another
+model will write the next prompt from your answers, so accuracy matters more
+than speed or brevity.
+
+--------------------------------------------------------------------------------
+GROUND RULES
+--------------------------------------------------------------------------------
+1. THIS IS A READ-ONLY INVESTIGATION. Do not modify engine source, config,
+   tests, or docs (other than writing your answers file, below). Do NOT commit
+   anything. Do NOT start bulk data generation.
+2. Put any scratch scripts and scratch output in a temporary directory outside
+   the tracked source (e.g. /tmp or data/scratch/), and delete scratch data when
+   you are finished. Tell me what you created and deleted.
+3. Do not guess. For every answer, cite evidence: file path + line numbers or
+   function names, and/or the exact command you ran with its output. If you
+   could not verify something, write "UNVERIFIED" and say what you would need
+   to check it. If the README or comments disagree with the actual code, trust
+   the code and tell me about the disagreement.
+4. Where a question says RUN, actually execute the code and report real numbers
+   rather than estimating from reading the source.
+5. The user's belief about the controls is: you CLICK ONCE to set where the
+   camera heads, and click AGAIN to switch to a different doorway (it is not
+   click-and-hold). Do not assume this is right or wrong; verify it in code
+   (see Section 1).
+6. Environment note from the changelog: npx is broken. Invoke tools directly
+   (node node_modules/vitest/vitest.mjs run, node node_modules/tsx/dist/cli.mjs
+   <file>, etc., from /engine).
+7. Priorities: [P1] = must answer, blocks the next prompt. [P2] = answer if
+   feasible, improves the next prompt.
+
+ANSWER FORMAT
+Write all answers to engine/docs/PLANNING-ANSWERS.md (uncommitted), mirroring the
+numbering below (e.g. "1.3 ..."). For each item give: a direct answer first, then
+evidence, then any caveats. Where I ask for statistics, give a small table or
+histogram (counts and percentages). Also paste the complete contents of that file
+in your final reply so it can be copied back to me.
+
+--------------------------------------------------------------------------------
+SECTION 1 — THE CONTROL SIGNAL AND CLICK SEMANTICS
+--------------------------------------------------------------------------------
+This is the most important section. The trained network will be conditioned on
+one per-frame value, called controlSignalX in the manifest. I need to know
+exactly what it means.
+
+1.1 [P1] Trace one click end to end. Starting from the pointer/mouse event in
+    human mode and from the bot/scripted-input path in headless mode, list every
+    function the click passes through until it changes simulation state, and
+    what state it changes. Is the interaction "click once to set a target" or is
+    any hold/drag behavior involved? Is mousedown, mouseup, or click used?
+
+1.2 [P1] What exactly is stored in controlSignalX each frame? Is it (a) the raw
+    X of the most recent click, (b) the X of the most recent ACCEPTED click (i.e.
+    not discarded by debounce), (c) something derived from the chosen doorway,
+    or (d) something else? Give the code that sets it.
+
+1.3 [P1] Debounce: when a click arrives inside the debounce window, what
+    happens to (i) the steering target, (ii) controlSignalX, (iii) the click-pulse
+    visual? Are ignored clicks recorded anywhere in the manifest?
+
+1.4 [P1] Between clicks, is the steering target STICKY (a specific doorway is
+    chosen and kept until passed) or is the target RE-RESOLVED EVERY FRAME from
+    the held X? If it is sticky, what are the exact rules for when the sticky
+    target is cleared or replaced (door passed, door leaves the candidate set,
+    door becomes unreachable, entity disposed, etc.)?
+
+1.5 [P1] When the player passes through a doorway into a NEW entity (hallway,
+    room, junction, bend), what happens to the previous click? Specifically:
+    does the held X still influence steering in the new entity, does it reset to
+    the screen-center default, or something else? Does controlSignalX in the
+    manifest change at that moment? If the logged signal and the engine's actual
+    steering behavior can disagree at any point, describe every such case.
+
+1.6 [P1] Default behavior: when there is no active click, which doorway is
+    targeted and by what rule (nearest to screen center? straightest in world
+    heading?). Is this rule evaluated per frame or only when a new entity is
+    entered?
+
+1.7 [P1] Coordinate convention: how is a click's pixel X converted to the
+    normalized value? Is it relative to canvas width, centered, and range -1..1?
+    Which sign is left? Is the mapping linear in screen pixels or in view angle?
+    Does supersampling (RENDER_SCALE), CSS scaling, or aspect ratio affect it?
+    How is each doorway's on-screen X computed (same camera, same FOV, same
+    projection)? Cite the code for both.
+
+1.8 [P1] What is the range and typical resolution of the signal in practice?
+    Can it take the exact values -1 and +1, and can it be exactly 0 after a real
+    click (as distinct from the "no click yet" default)? Is there any way for
+    the manifest to distinguish "never clicked" from "clicked dead center"?
+
+1.9 [P2] Are clicks ever ignored for other reasons (during a gated turn phase,
+    while no candidates are reachable, during entity transitions)? List them.
+
+1.10 [P2] Is there any other input besides click X (keyboard, scroll, Y
+     coordinate)? Confirm nothing else affects the simulation.
+
+--------------------------------------------------------------------------------
+SECTION 2 — FRAME / SIGNAL TIMING ALIGNMENT
+--------------------------------------------------------------------------------
+For an action-conditioned model I must know which signal value CAUSES the
+change from frame i to frame i+1.
+
+2.1 [P1] Write out the exact per-frame order of operations in BOTH the headless
+    loop and the human recording loop: when is input read, when is the click
+    processed, when is the simulation stepped, when is the frame rendered,
+    when is the image captured, and when is controlSignalX sampled and logged?
+
+2.2 [P1] Given that order: if a click arrives "during" frame i, does it
+    first affect the image of frame i, frame i+1, or later? Which manifest
+    index records the new signal value first? State plainly: "the transition
+    from frame i to frame i+1 is driven by controlSignalX[__]" (fill in the
+    index relationship) and prove it with a tiny scripted test: inject a single
+    click at a known frame and show the first frame index at which (a) the
+    logged signal changes and (b) the player heading begins to change.
+
+2.3 [P1] RUN: measure click-to-motion latency. For clicks on doors at several
+    distances/angles, report frames from click until heading changes by more
+    than 1 degree, and frames until the player is aligned with the target. Give
+    min / median / max, and note how it varies with jerk limiting and turn gating.
+
+2.4 [P2] Are there duplicated or skipped frames (e.g. frame 0 handling, last
+    frame handling, frames where the render did not update)? Is
+    simulatedTime exactly frameIndex * timestep for every frame?
+
+--------------------------------------------------------------------------------
+SECTION 3 — STEERING AND REACHABILITY (FOR DESIGNING BOT PERSONAS)
+--------------------------------------------------------------------------------
+3.1 [P1] Describe the candidate-collection logic: what counts as a candidate
+    ("visible and enterable"), how many can there be at once, and what data each
+    candidate carries (screen X, reachability flag, entity id, doorway type,
+    distance, approach point, etc.).
+
+3.2 [P1] Exact click-resolution algorithm: given a click X and a candidate
+    list, which candidate is chosen, including the fallback when the nearest is
+    unreachable (which direction does the search proceed?) and the behavior when
+    nothing is reachable. Cite the code.
+
+3.3 [P1] What does "reachable" depend on, precisely (front-cone angle, arc
+    length, distance, gate state)? Under what situations does a click on a door
+    produce a DIFFERENT result depending on how late it is made? Give two
+    concrete examples (e.g. a side doorway clicked early vs. clicked 1.5 units
+    before it).
+
+3.4 [P1] Can a click retarget in the middle of a turn or approach (and how is
+    heading continuity preserved)? Are there phases where retargeting is
+    disallowed or delayed?
+
+3.5 [P2] Does walking speed stay constant at all times, including during turns?
+
+3.6 [P2] Can the player ever get stuck, pinned against a wall, or end up with no
+    target for an extended period? What happens to controlSignalX and the
+    frames in that situation?
+
+--------------------------------------------------------------------------------
+SECTION 4 — BOT INTERFACE AND HEADLESS ARCHITECTURE
+--------------------------------------------------------------------------------
+4.1 [P1] Show the placeholder bot's exact code path: what it clicks, how often,
+    and the interface through which it feeds input per frame. Does it run inside
+    the page or in Node across the Puppeteer bridge?
+
+4.2 [P1] What information could a smarter bot read from the engine on a given
+    frame (candidate doors, their screen X, reachability, current entity type,
+    heading, distance to the next doorway, time since entity entry)? Is each
+    already exposed to the bot interface, or would it need new plumbing? Where
+    would that plumbing go?
+
+4.3 [P1] Per-frame bridge cost: does the headless pipeline cross the Puppeteer
+    bridge once per frame (page.evaluate or similar)? If bots needed to run
+    inside the page for speed, how hard is that with the current structure?
+
+4.4 [P2] How are episode seeds assigned (random per episode vs. supplied list)?
+    Can a caller supply an explicit list of seeds and a policy-name per episode?
+
+4.5 [P2] Can episodes be run with different config overrides (e.g. a different
+    OUTPUT_WIDTH/HEIGHT) without editing config.ts?
+
+--------------------------------------------------------------------------------
+SECTION 5 — DETERMINISM AND REPLAY
+--------------------------------------------------------------------------------
+Human recordings will later be replayed to evaluate the trained network, so
+replay fidelity matters.
+
+5.1 [P1] Is the world's content a function of (seed) alone, or of (seed + the
+    path the player takes)? Because generation is lazy, explain precisely what
+    determines each entity's contents, and whether two different click
+    sequences from the same seed produce the same entity when they reach it.
+
+5.2 [P1] RUN: take one recorded or scripted episode (seed + per-frame click
+    sequence) and replay it twice through the headless pipeline. Are the PNGs
+    byte-identical? If not, report the maximum and mean per-pixel difference and
+    where differences appear. Also check that player position/heading are
+    bit-identical.
+
+5.3 [P1] RUN: replay a recording made with the HEADFUL recorder (npm run record)
+    through the HEADLESS pipeline with the same seed and clicks. Do the frames
+    and states match? If they differ, quantify by how much, and say whether the
+    cause is rendering differences (launch args, GPU path) or simulation
+    differences.
+
+5.4 [P2] Sources of nondeterminism you can identify (Math.random, Date.now,
+    performance.now, floating-point differences, flicker, texture generation,
+    async ordering).
+
+--------------------------------------------------------------------------------
+SECTION 6 — DATASET FORMAT, SIZE, AND THROUGHPUT
+--------------------------------------------------------------------------------
+6.1 [P1] RUN one 600-frame episode and report: the full per-frame record
+    fields actually written (paste one frame entry), average PNG file size,
+    total episode directory size, and manifest.json size. Extrapolate disk use
+    for 100k, 500k, and 1M frames.
+
+6.2 [P1] RUN a throughput benchmark of the real headless pipeline at
+    concurrency 1, 2, 4, 6, and 8 (stop if the GPU or system struggles): frames
+    per second per instance, aggregate frames per second, GPU memory per
+    instance (nvidia-smi), and CPU use. Report the best concurrency and the
+    resulting estimate of hours to generate 500k frames.
+
+6.3 [P1] Where is the time going per frame (render, readback, downsample, PNG
+    encode, bridge transfer, disk write)? Provide a rough breakdown from
+    profiling or timing instrumentation (scratch only; do not leave
+    instrumentation in the source).
+
+6.4 [P1] Does the headless pipeline write the manifest incrementally or only at
+    the end? What happens to a run that crashes at frame 500 of 600? Can a
+    batch of episodes be resumed, or does it restart? Is a partially written
+    episode distinguishable from a complete one?
+
+6.5 [P2] RUN a long episode (e.g. 10,000 frames) and report memory growth of the
+    page and the Node process over time. Confirm entity disposal prevents leaks.
+
+6.6 [P2] Is the per-frame record schema the same between the headless manifest
+    and the human recorder's playtest manifest? List every field that differs.
+
+--------------------------------------------------------------------------------
+SECTION 7 — WORLD STATISTICS (RUN, DON'T ESTIMATE)
+--------------------------------------------------------------------------------
+Use the cheapest valid method (the renderer-free replica used in
+tests/regression.test.ts, or World with buildGeometry:false plus the Engine step
+logic) so you can run many episodes quickly. Run on at least 200 different seeds
+for 1,200 frames each, using the current placeholder bot AND a second scratch
+bot that picks a uniformly random reachable doorway each time it enters a new
+entity. Report for each bot:
+
+7.1 [P1] Share of frames spent in each entity type (hallway, room, junction,
+    bend) and median / p10 / p90 frames per entity visit by type.
+
+7.2 [P1] Histogram of the number of visible candidate doors per frame and of
+    the number of REACHABLE candidates per frame. What fraction of frames have
+    two or more reachable candidates?
+
+7.3 [P1] Under the default (no-click) behavior, how often is the chosen door
+    the straightest one in situations with 2+ reachable doors? Under each bot?
+
+7.4 [P1] Histogram of controlSignalX values under the placeholder bot, and how
+    often a click resolved to a different door than the nearest-by-screen-X door
+    (i.e. how often the fallback path triggered).
+
+7.5 [P1] Collision / wall-overlap events: count, rate per 1,000 frames, and
+    whether any episode got pinned or stalled. Show the worst case.
+
+7.6 [P1] Distribution of per-frame heading change (radians per frame): mean,
+    p50, p95, max. Fraction of frames where the heading is essentially constant.
+
+7.7 [P2] Distribution of the number of distinct steering phases and their
+    durations (approach, turn gate, through-leg).
+
+7.8 [P2] Episode start: are all episodes' first frames visually identical or do
+    they vary? What randomization happens at episode start?
+
+--------------------------------------------------------------------------------
+SECTION 8 — VISUAL QUALITY AND DATASET HYGIENE
+--------------------------------------------------------------------------------
+Use a vision-capable subagent where you need to look at images.
+
+8.1 [P1] Produce contact sheets (saved to a scratch dir and described to me)
+    of the same ~12 representative frames at OUTPUT 320x240 and downsampled to
+    128x96, 96x72, and 64x48. Include: a long hallway view, a junction, a bend, a
+    room interior, a view through a doorway into the next entity, a blacked-out
+    second-degree doorway, a tall room and a low room, and a close wall. Say
+    whether doorways, door edges, and the black fill remain clearly legible at
+    each size, and which is the smallest resolution where all remain legible.
+
+8.2 [P1] Does anything visibly POP or change discontinuously within view when
+    entities are generated or disposed (geometry appearing, light fixtures
+    popping on/off, fog changing, blackout fills appearing)? Examine a sequence
+    of frames around entity transitions and report honestly, with frame numbers.
+    A next-frame prediction model cannot predict such pops, so these matter.
+
+8.3 [P1] How much visual variety exists? List what is randomized per entity
+    (materials, colors, textures, light placement, sizes). How many distinct
+    wall/floor/ceiling looks can appear? Do rooms look meaningfully different
+    from each other and from hallways?
+
+8.4 [P2] The changelog lists "visual verification of single-sided walls and wall
+    thickness" as an open item. Has it been verified? If not, check a recorded
+    run for z-fighting, see-through walls, or clipping at doorways.
+
+8.5 [P2] Are flicker and any time-varying lighting currently off? Confirm no
+    visual element changes with time other than camera motion.
+
+8.6 [P2] Any other visual artifacts you notice (texture stretching, moire at
+    low resolution, shimmering edges after downsampling, banding).
+
+--------------------------------------------------------------------------------
+SECTION 9 — HUMAN RECORDING TOOL AND EXISTING DATA
+--------------------------------------------------------------------------------
+9.1 [P1] List everything currently under /data (directory names, episode
+    counts, frame counts, sizes, and whether each is a headless episode or a
+    human playtest).
+
+9.2 [P1] For the human recorder, exactly which per-frame fields are written,
+    and can the full click-event list (frame index and raw X of every click,
+    including debounced ones) be reconstructed from a playtest manifest? If not,
+    what small change would be needed to log it?
+
+9.3 [P2] For a playtest recording, can per-frame candidate door screen
+    positions and reachability be recovered (they are listed as debug fields)?
+    That is what I would use to fit human-like bot parameters (reaction delay
+    after entering a space, click offset from the door center, clicks per door,
+    mind-change rate).
+
+9.4 [P2] Does the recorder's discard-on-close open item risk contaminating
+    anything currently in /data?
+
+--------------------------------------------------------------------------------
+SECTION 10 — MACHINE AND ENVIRONMENT
+--------------------------------------------------------------------------------
+Read-only commands only.
+
+10.1 [P1] OS and version; CPU model and core count; total RAM; GPU model and
+     VRAM; driver version (nvidia-smi); free disk space on the drive holding /data
+     (df -h).
+10.2 [P1] Is Python installed (version)? Is PyTorch installed, and if so which
+     version and does torch.cuda.is_available() return true? Is there a
+     virtualenv or conda environment? (Do not install anything; just report.)
+10.3 [P2] Node and npm versions; Chrome version used by Puppeteer.
+10.4 [P2] Is the GPU also driving the display? Would heavy generation make the
+     machine unusable for other work?
+
+--------------------------------------------------------------------------------
+SECTION 11 — REPO STATE AND OPEN ITEMS
+--------------------------------------------------------------------------------
+11.1 [P1] git status, current branch, latest commit hash, and whether the tree
+     is clean. Is there any tag or version marker for the engine? Do manifests
+     currently record the git commit or a config hash?
+11.2 [P1] Run the full test suite and typecheck now and report results.
+11.3 [P2] Status of each open item in CHANGES-LOG.md (visual verification,
+     discard-on-close, corner-hugging). Anything you believe is more urgent than
+     those?
+11.4 [P2] Anything in the README that is out of date relative to the code.
+
+--------------------------------------------------------------------------------
+SECTION 12 — OPEN-ENDED
+--------------------------------------------------------------------------------
+12.1 [P1] If you were about to generate 500,000 frames of training data for a
+     next-frame prediction model that is conditioned on controlSignalX, what are
+     the top five things you would worry about in the engine or labels as they
+     exist today? Be specific and rank them.
+12.2 [P2] Any engine behavior that makes the click -> motion relationship harder
+     for a neural network to learn than it needs to be (hidden state, long
+     delays, ambiguous mappings, inconsistent responses to identical inputs)?
+12.3 [P2] Anything you think I have not asked about that the next-stage author
+     should know.
+
+--------------------------------------------------------------------------------
+WHEN YOU ARE DONE
+--------------------------------------------------------------------------------
+- Confirm that the repo is unchanged apart from engine/docs/PLANNING-ANSWERS.md.
+- List scratch files and directories you created and confirm they are deleted.
+- Paste the full contents of PLANNING-ANSWERS.md in your final reply.

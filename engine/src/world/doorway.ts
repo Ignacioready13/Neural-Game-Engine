@@ -50,6 +50,8 @@ export interface DoorwaySpec {
   side: string;
   targetEntityId: string;
   targetGenerated: boolean;
+  /** See Doorway.entry. */
+  entry?: boolean;
   /** Override the default entryPoint (opening + outward half-width). Turning
    * doorways supply a waypoint past the opening/corner here. */
   entryPoint?: Vec2;
@@ -80,6 +82,7 @@ export function makeDoorway(ids: Ids, spec: DoorwaySpec): Doorway {
     side: spec.side,
     targetEntityId: spec.targetEntityId,
     targetGenerated: spec.targetGenerated,
+    entry: spec.entry,
     entryPoint:
       spec.entryPoint ?? {
         x: spec.x + facingVec.x * entryOffset,
