@@ -159,6 +159,12 @@ export class Renderer {
     return this.sceneState.projectToScreenX(wx, wz, wy);
   }
 
+  /** The render camera's near plane (world units) — read by the viewUnsafe
+   * clearance measurement so the label always tracks the real camera. */
+  get cameraNear(): number {
+    return this.sceneState.camera.near;
+  }
+
   /** Sync live entities into the scene: add new groups, remove disposed ones
    * (tracked by descriptor id), and keep per-entity fixture lights in step. */
   setEntities(entities: Entity[]): void {

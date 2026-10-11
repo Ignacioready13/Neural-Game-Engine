@@ -231,6 +231,13 @@ export interface FrameRecord {
   playerZ: number;
   playerHeading: number;
   currentEntityId: string;
+  /** Stage 2 follow-up. True when the camera at capture time was close enough to
+   * a rendered wall/jamb that the view is compromised (a surface inside the
+   * camera near plane + margin, or the camera behind a single-sided wall plane
+   * = see-through). This is a LABEL ONLY — it never aborts or truncates an
+   * episode. Data loaders MUST drop any training window that contains a frame
+   * with `viewUnsafe: true` (including the window's action target frame). */
+  viewUnsafe: boolean;
 }
 
 /** One frame's debug/telemetry record (schema v2), kept separable from the
@@ -290,6 +297,9 @@ export interface EpisodeManifest {
     debounceSeconds: number;
     walkSpeed: number;
     fovHorizontalDeg: number;
+    /** Stage 2 follow-up: the `viewUnsafe` clearance margin (world units). The
+     * flag fires when a rendered surface is closer than camera near + this. */
+    viewUnsafeMargin: number;
   };
   frames: FrameRecord[];
   debugFrames: DebugFrame[];

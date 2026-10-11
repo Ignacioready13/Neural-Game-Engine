@@ -20,7 +20,7 @@ architecture is the root [`README.md`](../../README.md) and
 | 4.9 doc fixes | `README.md`, `CHANGES-LOG.md` | see §6 |
 | 4.10 pilot + review images | `engine/data/pilot_v1/` | §5 |
 | 4.11 clipping failsafe | `src/headless/driver.ts` | L1 wallOverlap, L2 ≥10 slide frames, L3 report-only; trim 8 s / keep ≥60 frames; `aborted.jsonl` |
-| 4.5a overlay | `src/render/Renderer.ts`, `src/render/scene.ts` | click pulse removed from captured frames only |
+| 4.5a overlay | (no change needed) | the click pulse never reaches captured frames — see §3(a) |
 
 Simulation behavior (world generation, steering, reachability, debounce,
 collision, timing, RNG) was **not changed**.
@@ -39,8 +39,15 @@ change was made.
 
 ## 3. 4.5 findings (frame cleanliness)
 
-- **(a) Overlay** — the click pulse was baked into captured PNGs. It was removed
-  from the *captured* frames only (human play still shows it). Allowed fix.
+- **(a) Overlay** — the click pulse is **not** in captured frames, and no change
+  was needed. `Renderer.render` draws pulses to the default framebuffer *after*
+  `ResolutionPipeline.blit`, and `captureFrame` reads `pipeline.readPixels()`,
+  which reads the downsampled scene target (`outputTarget`) captured before the
+  pulse pass. A paired pixel probe over 400 click events (frame *i+1* vs *i* at
+  the disc centre vs a control band) gives disc-minus-control Δlum = **−0.43**
+  (and Δ(R−B) = +0.12), i.e. the pulse's signal is absent. (An earlier draft of
+  this report incorrectly claimed the pulse was baked in and removed; that was
+  wrong — the 2026-10-08 `Renderer.ts` diff was only the `EntityLights` type.)
 - **(b) Lag** — the headless loop is fixed-timestep and nothing in the
   capture/render path depends on wall-clock time (no rAF timing, timers,
   `performance.now`, or async loading). A double-render at entity-generation
@@ -54,9 +61,12 @@ change was made.
 
 Pilot: `engine/data/pilot_v1/` — **150 episodes** (120 train / 15 val / 15 test),
 600 frames each, mixture profile, concurrency 8. **145 complete + 5 aborted
-(3.3%), 0 failed**, 88,047 frames, 6.70 GB, **134 s** wall-clock on the RTX 5070
+(3.3%), 0 failed**, 88,047 frames, 6.70 GB, **130 s** wall-clock on the RTX 5070
 (NVIDIA Vulkan confirmed in the episode logs). `report.json` and `report.md` are
-written into the pilot directory.
+written into the pilot directory. **Regenerated in place 2026-10-11** so every
+frame carries the `viewUnsafe` label (§4b); the regeneration is behaviour-neutral
+and produced the identical dataset (same episodes, aborts, frame counts and
+bytes), with only the new field added.
 
 | Item | Result |
 |---|---|
@@ -70,6 +80,54 @@ written into the pilot directory.
 | 8. Per-persona frame share | decisive 31.3%, uniform 24.5%, prober 13.7%, idle 9.6%, late 9.5%, dither 6.3%, spammer 5.0% |
 | 9. Integrity | 0 incomplete episodes; no seed shared between splits |
 | 10. Clipping | 5 aborted (one each decisive/idle/late/spammer/uniform); 676 frames trimmed; brief-graze (L3) 0.0% |
+| 11. View safety | `viewUnsafe` (label-only, margin 0.10) — **357 frames (0.41%)**, **90 / 150 episodes (60.0%)** — see §4b |
+**Replay caveat (seed 78).** The diagnostic replays were renderer-free (world +
+steering only, no browser). One episode, `seed 78`, diverges from the real engine
+after f91 at a debounce boundary, so a renderer-free replay is not bit-exact
+there; **any later human-session replay must go through the real headless
+engine**, not a renderer-free harness.
+
+## 4b. View safety (`viewUnsafe`) — the 4.11 follow-up
+
+The read-only diagnosis (Check-in 3) found frames where the camera — a floor
+point with **no collision radius** — sits close enough to a rendered wall that
+the view is compromised, by one of two purely *rendering* mechanisms:
+
+1. **Near-plane clip** — a surface nearer than the camera near plane (**0.02**,
+   unchanged) is clipped away, leaving a hole (e.g. `seed 0 f133`, distance
+   0.0196).
+2. **Single-sided see-through** — walls are front-side only, so a wall whose
+   front face points away from the camera is culled; if the camera has crossed
+   that plane you look straight through it (e.g. `seed 111 f175`).
+
+Neither is caught by the clipping failsafe (L1 `wallOverlap` fires only when the
+player *leaves the floor*; here the player stays on it), and the smallest fix is
+not a simulation or render change — it is a **label**. Every frame now records
+`viewUnsafe` (`src/sim/viewSafety.ts`): true when the nearest rendered surface of
+the active entity or a maintained neighbour is nearer than
+`camera near + VIEW_UNSAFE_MARGIN` (**0.10** ⇒ 0.12), or when that nearest
+surface is back-facing with geometry in front of the camera (the see-through
+case). It is **label-only** — it never aborts, trims or otherwise changes an
+episode. Loaders must drop any training window that touches a flagged frame.
+
+Margin chosen (0.10) so that the whole `seed 0` h2→h4 doorway graze flags —
+f129–f135 all flag, spanning the f132 (0.059) / f133 (0.020) / f134 (0.034)
+frames named at the check-in, while f128 and f136 stay clear. Measured over the
+regenerated pilot:
+
+| | flagged | share |
+|---|---|---|
+| frames | 357 / 88,047 | **0.41%** — under the ~1% budget, no tightening needed |
+| episodes | 90 / 150 | **60.0%** |
+
+The frame rate is the number the ~1% budget applies to, and it passes. The
+episode share is high only because the flag is per *frame*: 72 of the 90 flagged
+episodes have **1–4** flagged frames (a sub-0.2 s doorway graze); the tail is
+`seed 55` (38 frames, two long wall-slide runs) and `seed 78` (24). The pattern
+matches the diagnosis exactly — the diag's independent geometric count over the
+149 non-diverged episodes (333 frames at the same threshold) plus `seed 78`'s 24
+equals the 357 the report measures.
+
 
 ## 5. The straightest-target finding (4.6 success criterion)
 
@@ -123,6 +181,10 @@ Category labels are honest best-effort heuristics from manifest metadata
 the exact "blacked-out doorway" state are not recorded in the manifest, so two
 room interiors are shown without a tall/low claim.
 
+The pilot was regenerated in place (§4b), but the regeneration is
+behaviour-neutral and reproduced identical episodes/frames, so these images still
+correspond to the same frames on disk.
+
 ## 8. Shortcuts taken
 
 - The report and review-image selection read manifests/`aborted.jsonl` only; no
@@ -137,8 +199,8 @@ room interiors are shown without a tall/low claim.
 ## 9. Files changed / added (Stage 2)
 
 Added: `src/headless/plan.ts`, `src/headless/provenance.ts`,
-`src/headless/report.ts`, `docs/DATASET-SCHEMA.md`, `docs/historical/README.md`,
-`docs/STAGE2-REPORT.md`.
+`src/headless/report.ts`, `src/sim/viewSafety.ts` (the `viewUnsafe` probe),
+`docs/DATASET-SCHEMA.md`, `docs/historical/README.md`, `docs/STAGE2-REPORT.md`.
 
 Rewritten: `src/headless/workerPool.ts`, `src/headless/cli.ts`.
 
@@ -157,13 +219,19 @@ the 2026-10-08 work that Stage 2 did not touch.
 plans + disjoint seed ranges, provenance determinism, clipping-failsafe trim and
 delete paths). Determinism and resume were confirmed: re-running an episode is
 byte-identical, and resume skips completed + aborted episodes while deleting and
-redoing partials.
+redoing partials. The `viewUnsafe` label was checked end to end: the `seed 0`
+smoke episode flags exactly f129–f135 (spanning the f132/f133/f134 the check-in
+named) and leaves f128/f136 clear, and the regenerated pilot's flagged frames
+reproduce the diagnosis's independent geometric count (§4b).
 
-## 11. Needs your decision
+## 11. Follow-up status (all check-in decisions resolved)
 
-1. **Straightest-target criterion** (§5): accept the choice-moment rate (48.8%)
-   as the criterion, or request the literal tune-once + regeneration.
-2. **Review images**: look at `_review/legibility.png` and `_review/transitions.png`
-   and confirm they look acceptable (or ask for different frames).
-3. **Next step**: if the pilot and images are acceptable, the brief says to
-   **WAIT** — there is no further Stage 2 work to do.
+1. **Straightest-target criterion** — accepted: the choice-moment rate (48.8%)
+   is the criterion; no persona tuning, no regenerating for it.
+2. **Review images** — `_review/legibility.png` accepted; the `_review/transitions.png`
+   row `h2->h4 @ seed 0 f133` is the clipping graze, which drove the `viewUnsafe`
+   label in §4b.
+3. **View safety** — implemented as the label-only `viewUnsafe` (§4b), pilot
+   regenerated in place, report/README/schema updated. No simulation or render
+   change (near plane still 0.02).
+4. **Next step**: per the brief, **WAIT** — there is no further Stage 2 work to do.

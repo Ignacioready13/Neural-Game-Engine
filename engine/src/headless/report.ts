@@ -45,6 +45,16 @@ interface Report {
   labelAmbiguityShare: number;
   collisionEventsPer1000: number;
   wallOverlapFrames: number;
+  viewUnsafe: {
+    /** Frames carrying `viewUnsafe: true`. */
+    frames: number;
+    frameShare: number;
+    /** Episodes containing ≥1 flagged frame. */
+    episodes: number;
+    episodeShare: number;
+    /** The clearance margin the flag was computed with (near + this). */
+    margin: number;
+  };
   perPersona: Record<string, { frameShare: number; clickRate: number }>;
   integrity: { incompleteEpisodes: string[]; seedsSharedBetweenSplits: number[] };
   clipping: {
@@ -159,6 +169,8 @@ async function main(): Promise<void> {
   let ambiguityMismatch = 0;
   let maxCollisionEvents = 0;
   let wallOverlapFrames = 0;
+  let viewUnsafeFrames = 0;
+  let viewUnsafeEpisodes = 0;
   let briefGrazeRuns = 0;
   let framesTrimmed = 0;
 
@@ -174,6 +186,7 @@ async function main(): Promise<void> {
   for (const { manifest, dir } of manifests) {
     totalFrames += manifest.frames.length;
     framesTrimmed += manifest.trimmedFrames ?? 0;
+    let episodeUnsafe = 0;
 
     // PNG sizes (stat, never decode).
     for (const f of manifest.frames) {
@@ -196,6 +209,10 @@ async function main(): Promise<void> {
         acceptedHist[histIndex(fr.clickX)]! += 1;
       }
       if (fr.actionHasClicked === false) actionHasClickedFalse += 1;
+      if (fr.viewUnsafe === true) {
+        viewUnsafeFrames += 1;
+        episodeUnsafe += 1;
+      }
 
       if (!d) continue;
       const p = persona(d.persona);
@@ -278,6 +295,8 @@ async function main(): Promise<void> {
       }
     }
     if (run > 0 && run < CONFIG.clipL2RunLength) briefGrazeRuns += run;
+
+    if (episodeUnsafe > 0) viewUnsafeEpisodes += 1;
   }
 
   const abortedTotal = aborts.length;
@@ -338,6 +357,13 @@ async function main(): Promise<void> {
     labelAmbiguityShare: ambiguityTotal > 0 ? ambiguityMismatch / ambiguityTotal : 0,
     collisionEventsPer1000: totalFrames > 0 ? (maxCollisionEvents / totalFrames) * 1000 : 0,
     wallOverlapFrames,
+    viewUnsafe: {
+      frames: viewUnsafeFrames,
+      frameShare: totalFrames > 0 ? viewUnsafeFrames / totalFrames : 0,
+      episodes: viewUnsafeEpisodes,
+      episodeShare: totalEpisodes > 0 ? viewUnsafeEpisodes / totalEpisodes : 0,
+      margin: CONFIG.viewUnsafeMargin,
+    },
     perPersona,
     integrity: { incompleteEpisodes: incomplete, seedsSharedBetweenSplits },
     clipping: {
@@ -412,6 +438,13 @@ async function main(): Promise<void> {
       .map(([k, v]) => `- aborted ${k}: ${v}`),
     `- frames trimmed: ${report.clipping.framesTrimmed}`,
     `- brief-graze (L3) frame share: ${pct(report.clipping.briefGrazeShare)}`,
+    '',
+    '## 11. View safety (`viewUnsafe` label)',
+    `- margin: ${report.viewUnsafe.margin} (flag fires when a rendered surface is closer than camera near + margin)`,
+    `- flagged frames: ${report.viewUnsafe.frames} (${pct(report.viewUnsafe.frameShare)})`,
+    `- episodes with ≥1 flagged frame: ${report.viewUnsafe.episodes} (${pct(report.viewUnsafe.episodeShare)})`,
+    '- label only: it never aborts or truncates an episode; loaders must drop any',
+    '  training window that touches a flagged frame.',
     '',
   ].join('\n');
 

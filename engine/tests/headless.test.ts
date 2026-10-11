@@ -91,6 +91,7 @@ describe('manifest helpers', () => {
           debounceSeconds: 0.15,
           walkSpeed: 2,
           fovHorizontalDeg: 85,
+          viewUnsafeMargin: 0.1,
         },
         frames: [
           {
@@ -106,6 +107,7 @@ describe('manifest helpers', () => {
             playerZ: 0,
             playerHeading: 0,
             currentEntityId: 'entity-1',
+            viewUnsafe: false,
           },
         ],
         debugFrames: [],

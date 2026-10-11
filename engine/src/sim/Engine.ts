@@ -32,6 +32,7 @@ import { Renderer } from '../render/Renderer';
 import { resolveWallCollision } from './collision';
 import { doorwayApproachPoint, doorwayPhase, doorwayTargetPoint } from './navigation';
 import type { DoorwayPhase } from './navigation';
+import { ViewSafetyProbe } from './viewSafety';
 
 interface Pulse {
   screenX: number;
@@ -70,6 +71,10 @@ export class Engine {
   // acceptance result of the click submitted THIS step (clickAccepted field).
   private slidThisStep = false;
   private clickAcceptedThisStep: boolean | null = null;
+
+  // viewUnsafe label (Stage 2 follow-up): measures camera clearance to rendered
+  // geometry. Label-only — it never affects simulation or rendering.
+  private readonly viewProbe = new ViewSafetyProbe();
 
   constructor(config: EngineConfig, seed: number, canvas: HTMLCanvasElement) {
     this.config = config;
@@ -221,7 +226,20 @@ export class Engine {
     targetPhase: DoorwayPhase;
     /** This frame's candidate doorways (id + screen X + reachability). */
     candidates: Array<{ doorwayId: string; screenX: number; reachable: boolean; screenDistance: number }>;
+    /** Stage 2 follow-up (viewUnsafe label): true when the camera is close
+     * enough to a rendered wall/jamb that the view is compromised — either the
+     * surface is inside the camera near plane + margin (near-plane clip) or the
+     * camera sits behind a single-sided wall plane (see-through). Label only;
+     * the loader drops any training window containing a flagged frame. */
+    viewUnsafe: boolean;
   } {
+    const safety = this.viewProbe.measure(
+      this.player,
+      this.config.eyeHeight,
+      this.renderer.cameraNear,
+      this.config.viewUnsafeMargin,
+      this.world.all(),
+    );
     return {
       player: this.player,
       activeEntityId: this.activeEntityId,
@@ -243,6 +261,7 @@ export class Engine {
         reachable: c.reachable,
         screenDistance: c.screenDistance,
       })),
+      viewUnsafe: safety.unsafe,
     };
   }
 
@@ -305,6 +324,7 @@ export class Engine {
     const { generated, disposed } = this.world.maintain(this.activeEntityId);
     void generated;
     void disposed;
+    this.viewProbe.clear(); // entity ids repeat; geometry must not be re-used
     this.renderer.setEntities(this.world.all());
     this.blackDoorways = this.world.blackDoorways(this.activeEntityId);
     this.renderer.setBlackDoorways(this.blackDoorways);

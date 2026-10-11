@@ -172,6 +172,22 @@ is deleted if too little remains. Every aborted episode is recorded in
 `aborted.jsonl`; brief grazes (L3) are reported but not a crash. Details in
 `engine/docs/DATASET-SCHEMA.md` §7.
 
+### View safety (`viewUnsafe`)
+
+The clipping failsafe watches the *simulation*; a separate **label-only** flag
+watches the *view*. The player is a floor point with no collision radius, so the
+camera can end up close enough to a wall that (a) the surface is clipped by the
+camera near plane, or (b) the camera crosses a single-sided wall plane and looks
+through it. Each frame records `viewUnsafe: true` when either holds (closest
+rendered surface nearer than camera near + `VIEW_UNSAFE_MARGIN`, default 0.10
+world units, or a back-facing plane with geometry in front).
+
+Unlike the failsafe, `viewUnsafe` **never aborts or trims an episode** — the
+frames stay on disk and in the manifest. A training loader should **drop any
+window that touches a flagged frame** (including its action target frame). The
+share of flagged frames/episodes is reported in `report.md` §11. Details in
+`engine/docs/DATASET-SCHEMA.md` §5b.
+
 ### GPU acceleration
 
 Headless Chromium silently falls back to a software rasterizer (SwiftShader)
@@ -217,7 +233,8 @@ truncation) is `engine/docs/DATASET-SCHEMA.md`. The short version:
       "actionHasClicked": false,
       "clickX": null, "clickAccepted": null,
       "playerX": 0.5, "playerZ": 1.5, "playerHeading": 1.5708,
-      "currentEntityId": "h1"
+      "currentEntityId": "h1",
+      "viewUnsafe": false     // camera too close to a rendered wall/jamb
     }
   ],
   "debugFrames": [ /* persona, targetDoorwayId, candidates, collisionEvents, … */ ],
@@ -231,8 +248,10 @@ truncation) is `engine/docs/DATASET-SCHEMA.md`. The short version:
 normalized screen-space click X (a step function; `0` = screen-center default
 before the first click), kept for compatibility and live-client semantics.
 `playerX/Z/heading` and the whole `debugFrames` section are debug context, not
-fed to the network. Frames are PNG (lossless) so compression artifacts don't
-pollute the training signal.
+fed to the network. `viewUnsafe` is not fed to the network either — it is a
+filter: drop any window containing a flagged frame (see *View safety* above).
+Frames are PNG (lossless) so compression artifacts don't pollute the training
+signal.
 
 ## Config
 

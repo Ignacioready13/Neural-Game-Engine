@@ -7,6 +7,42 @@ and `engine/docs/CONTRACTS.md`. This file replaces the old `handoff.md`.
 
 ---
 
+## 2026-10-11 — Stage 2 follow-up: `viewUnsafe` label (label-only) + pilot regeneration
+
+**Asked.** From Check-in 3: a read-only diagnosis had found frames where the
+camera (a floor point with no collision radius) sits close enough to a rendered
+wall that either the camera near plane clips it (leaving a hole) or the camera
+crosses a single-sided wall plane and sees through it — and the clipping failsafe
+cannot catch either, because it only watches the simulation. Implement the
+smallest fix: a per-frame **label-only** `viewUnsafe` boolean, with **no
+simulation or rendering change** (near plane stays 0.02).
+
+**Built.** `src/sim/viewSafety.ts` — `ViewSafetyProbe` measures the closest
+rendered triangle of the active entity + maintained neighbours (Ericson §5.1.5
+point-triangle distance over cached world-space triangles) and tests the
+back-facing/in-front see-through case; wired into `Engine.getState()` (cache
+cleared in `syncWorld()`). `Renderer.cameraNear` exposes the live near plane.
+The field flows through `BackroomsState`, `FrameRecord`, the manifest config
+subset (`viewUnsafeMargin`) and the driver. `report.ts` gained a `viewUnsafe`
+section (§11 of `report.md`). Threshold = camera near (0.02) +
+`VIEW_UNSAFE_MARGIN` (0.10) ⇒ 0.12.
+
+**Guarantee.** Label only — it never aborts, trims or otherwise changes an
+episode (the clipping failsafe is untouched). Loaders must drop any training
+window that touches a flagged frame; documented in DATASET-SCHEMA.md §5b.
+
+**Measured (regenerated pilot).** **357 / 88,047 frames (0.41%)** — under the
+~1% budget, so the margin was not tightened — across **90 / 150 episodes
+(60.0%)**; 72 of those 90 episodes have only 1–4 flagged frames. Margin 0.10 was
+chosen so `seed 0`'s whole doorway graze flags (f129–f135, spanning the named
+f132/f133/f134; f128/f136 clear).
+
+**Verification.** `tsc --noEmit` clean; 56 vitest tests pass; `seed 0` smoke
+episode flags exactly f129–f135. Pilot regenerated in place (behaviour-neutral:
+identical 145 complete / 5 aborted, 88,047 frames, 6.70 GB, 130 s).
+
+---
+
 ## 2026-10-10 — Stage 2: action labels, click-bot personas, resumable runs, pilot
 
 **Asked.** Implement Stage 2 of the training-data generator (brief
@@ -25,8 +61,10 @@ alignment, clipping failsafe, scripted `botOverride`), `src/headless/plan.ts`
 deterministic episode dirs, retry-once, early-stop), `src/headless/cli.ts`
 (plan CLI + legacy flags), `src/headless/provenance.ts` (configHash /
 engineCommit / dirty / engineSourceHash), `src/headless/report.ts` (the ten
-4.8 items), `docs/DATASET-SCHEMA.md` (the data contract). The click pulse
-overlay was removed from captured frames (4.5a).
+4.8 items), `docs/DATASET-SCHEMA.md` (the data contract). **No render change was
+needed for the click pulse (4.5a):** it is drawn after the blit, and
+`captureFrame` reads the pre-pulse `outputTarget`, so it never reached captured
+frames (confirmed by a 400-event paired pixel probe).
 
 **Key findings.**
 - *Section 3.* The earlier "three signal bins (0 / +1 / −1)" observation does

@@ -261,6 +261,7 @@ export async function runEpisode(opts: RunEpisodeOptions): Promise<EpisodeResult
         playerZ: stateBefore.player.z,
         playerHeading: stateBefore.player.heading,
         currentEntityId: stateBefore.activeEntityId,
+        viewUnsafe: stateBefore.viewUnsafe ?? false,
       };
       const debug: DebugFrame = {
         frameIndex: stateBefore.frameIndex,
@@ -449,6 +450,7 @@ function buildManifest(
       debounceSeconds: config.debounceSeconds,
       walkSpeed: config.walkSpeed,
       fovHorizontalDeg: config.fovHorizontalDeg,
+      viewUnsafeMargin: config.viewUnsafeMargin,
     },
     frames,
     debugFrames,

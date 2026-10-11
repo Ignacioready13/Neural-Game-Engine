@@ -50,6 +50,10 @@ export interface BackroomsState {
   targetPhase?: 'approach' | 'through';
   /** This frame's candidate doorways (id + screen X + reachability). */
   candidates?: Array<{ doorwayId: string; screenX: number; reachable: boolean; screenDistance: number }>;
+  /** Stage 2 follow-up: true when the camera is close enough to a rendered
+   * wall/jamb that the view is compromised (near-plane clip or single-sided
+   * see-through). Label only; recorded in the manifest as `viewUnsafe`. */
+  viewUnsafe?: boolean;
 }
 
 export interface BackroomsApi {

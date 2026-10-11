@@ -245,6 +245,21 @@ export const CLIP_STOP_SHARE = 0.25;
 /** Consecutive slide-backstop frames that count as sustained contact (L2). */
 export const CLIP_L2_RUN_LENGTH = 10;
 
+/** Stage 2 follow-up (viewUnsafe label). A frame is flagged `viewUnsafe` when
+ * the camera (a floor point at eye height, no collision radius) comes within
+ * `camera near plane + this margin` of ANY rendered triangle of the active
+ * entity or a maintained neighbour — i.e. close enough that the near plane
+ * clips the surface, or the camera has crossed a single-sided wall plane and
+ * sees through it. Label only: it never aborts or truncates an episode. The
+ * loader must drop any training window that touches a flagged frame.
+ *
+ * 0.10 was chosen so the whole seed-0 h2->h4 doorway graze flags (f129-f135,
+ * spanning f132 d=0.059 / f133 d=0.020 / f134 d=0.034). Over the full pilot it
+ * flags 0.41% of frames (357 / 88,047 — well under the ~1% budget) spread over
+ * 60% of episodes (90 / 150), essentially all of them 1-4 frame doorway grazes
+ * plus one long wall-slide run. */
+export const VIEW_UNSAFE_MARGIN = 0.1;
+
 // ---------------------------------------------------------------------------
 // Click-bot framework (Stage 2, Section 4.6)
 // ---------------------------------------------------------------------------
@@ -361,6 +376,8 @@ export interface EngineConfig {
   clipAlertShare: number;
   clipStopShare: number;
   clipL2RunLength: number;
+  /** Stage 2 follow-up: viewUnsafe clearance margin (world units). */
+  viewUnsafeMargin: number;
   // click-bot personas
   botSegmentLengthMin: number;
   botSegmentLengthMax: number;
@@ -436,6 +453,7 @@ export const CONFIG: Readonly<EngineConfig> = Object.freeze({
   clipAlertShare: CLIP_ALERT_SHARE,
   clipStopShare: CLIP_STOP_SHARE,
   clipL2RunLength: CLIP_L2_RUN_LENGTH,
+  viewUnsafeMargin: VIEW_UNSAFE_MARGIN,
   botSegmentLengthMin: BOT_SEGMENT_LENGTH_MIN,
   botSegmentLengthMax: BOT_SEGMENT_LENGTH_MAX,
   botDecisiveDelayMin: BOT_DECISIVE_DELAY_MIN,

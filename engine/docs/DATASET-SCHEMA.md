@@ -143,7 +143,8 @@ One record per frame, parallel to `frames/<NNNNNN>.png`.
   "clickAccepted": null,         // true accepted / false debounce-ignored / null no click
   "playerX": 0.5, "playerZ": 1.5,     // debug-only context, NOT fed to the model
   "playerHeading": 1.5708,
-  "currentEntityId": "h1"        // id of the entity the player occupies
+  "currentEntityId": "h1",       // id of the entity the player occupies
+  "viewUnsafe": false            // camera too close to a rendered wall/jamb (§5b)
 }
 ```
 
@@ -159,10 +160,37 @@ One record per frame, parallel to `frames/<NNNNNN>.png`.
 | `clickAccepted` | bool \| null | `true` accepted, `false` debounce-ignored, `null` no click submitted |
 | `playerX` / `playerZ` / `playerHeading` | float | debug context (not fed to the network) |
 | `currentEntityId` | string | active entity id (first is `"h1"`) |
+| `viewUnsafe` | bool | camera was too close to a rendered surface at capture time (§5b) |
 
 **Training rule:** feed `actionX` (and `actionHasClicked`) as the action for the
 transition from the current frame to the next. `controlSignalX` is kept only for
 backward compatibility and for the live-client semantics.
+
+## 5b. `viewUnsafe` — the view-compromise label
+
+The player is a floor point with **no collision radius**, so the camera can end
+up arbitrarily close to a wall. Two purely *rendering* artifacts follow, and both
+are invisible to the clipping failsafe (§7, which only watches the simulation):
+
+1. **Near-plane clip** — a surface closer than the camera near plane (0.02) is
+   clipped away, leaving a hole you can see through.
+2. **Single-sided see-through** — walls are drawn front-side only, so a wall
+   whose front face points away from the camera is culled; if the camera has
+   crossed that wall's plane you look straight through it.
+
+`viewUnsafe` is `true` when, at capture time, either holds: the closest rendered
+triangle of the active entity or a maintained neighbour is nearer than
+`camera near + viewUnsafeMargin` (default **0.10** world units, recorded in
+`manifest.config.viewUnsafeMargin`), **or** the camera sits behind a single-sided
+wall plane with geometry in front of it.
+
+- It is a **label only**. It never aborts, trims, or otherwise changes an
+  episode — unlike the clipping failsafe (§7), which does stop episodes.
+- **Loader rule:** a training window (frame → action target) must be **dropped**
+  if any frame it covers, *including its action target frame*, is flagged. The
+  frames stay on disk and stay in the manifest; the loader filters them out.
+- Occurrence is rare (< 1% of frames in the pilot); see the diagnostics report
+  (§11 of `report.md`).
 
 ## 6. `manifest.json` — `debugFrames[]` (separable debug section)
 
