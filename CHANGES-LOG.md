@@ -17,6 +17,11 @@ model) will be judged with (brief `stage4-prompt-baseline-model-and-evaluation.t
 action) -> next_frame` interface, channel-concat and FiLM action injection);
 `train.py` (config-driven, seeded, checkpoints + loss curves) and
 `train_multistep.py` (autoregressive multi-step + turn-onset oversampling);
+`train_future.py` (H-step teacher-forced lookahead + horizon ablation/counterfactual);
+`train_hold.py` (deployment-realistic hold-last conditioning + click/quiet-onset
+ablation); `probe_click.py` (redesigned click-direction counterfactual);
+`head_predict.py` (P4 direct heading readout), `train_hold_aux.py` (P5 auxiliary
+heading head) and `train_intent.py` (P6 oracle-intent + structured warp output);
 `metrics.py` (L1/MSE/PSNR/SSIM + phase-correlation shift) and `eval_harness.py`
 (the long-lived harness: one-step metrics + action-relevant subset, true/zeroed/
 shuffled/shifted action ablation, rollouts vs persistence, action-following,
@@ -38,6 +43,43 @@ Stage 3 code changed.
   gives no gradient to read the action. The conditioning *pathway* works (a synthetic
   shift task learns to 0.04 L1); multi-step objectives, onset oversampling and
   full backprop-through-time all failed to make the model action-responsive.
+- **The fix that works — and its limit: an H-step lookahead objective.**
+  `train_future.py` predicts the frame H=10 steps ahead in one forward pass from K
+  context frames + the K+H action sequence, with turn onsets oversampled. The *same*
+  FiLM U-Net then becomes decisively action-responsive: on onset val windows, true
+  lookahead actions score 0.101 vs zeroed 0.120 vs shuffled 0.139 (shuffled 38%
+  worse; +44% with mirror augmentation), and the redesigned click counterfactual
+  (`probe_click.py`) turns the correct way for a *change event* (left +0.72 px /
+  right −0.78 px; 0.30 both-correct) but not for a held constant position. The
+  catch: that direction comes from the **true-future** action sequence's click change
+  events. The deployment-realistic **hold-last** form (`train_hold.py`, future =
+  `a_{K-1}` repeated) collapses the ablation to *turn presence* only — shuffled 0.202
+  vs zeroed 0.212 (click onset) / 0.112 vs 0.117 (quiet onset), click counterfactual
+  both-correct 0.00, turn-sign agreement below chance (0.26). So directional
+  action-following at play time needs an explicit signal (auxiliary heading head or an
+  explicit `ΔactionX` input) — report §7.7–§7.9, §9. The one-step baseline is unchanged.
+- **Where the direction lives (P4/P5).** A direct heading readout from pixels + actions
+  (`head_predict.py`) reaches the oracle ceiling at 64×48 (0.85 vs 0.87, chance 0.50; the
+  explicit `ΔactionX` input helps, resolution does not) — so the direction *is*
+  extractable and no engine/detector change is needed. But an auxiliary heading head on
+  the hold-last frame model (`train_hold_aux.py`) reads direction at 0.89 yet leaves the
+  frames direction-blind (counterfactual both-correct 0.00, ablation unchanged): the
+  frame decoder, trained only by H-step pixel L1, cannot map the bottleneck's direction
+  to pixel motion. So the diffusion stage must condition the generator on an explicit
+  direction signal directly — report §7.10–§7.11, §9.
+- **P6 — the failure is in *expressing* the shift; a structured warp + explicit
+  direction signal fixes it.** Feeding the hold-last model the ground-truth intent (the
+  door nearest to the click's screenX, as a FiLM scalar + a Gaussian column map) is used
+  strongly — zeroing it raises onset H-step L1 44% — but a free pixel residual still
+  renders no shift (counterfactual both-correct 0.17). Reparameterizing the output as a
+  differentiable warp of the last frame by a predicted scalar shift (warp-only, so the
+  residual cannot shadow it) reaches **both-correct 0.87, predicted-vs-real shift ratio
+  0.65** under hold-last, and the turn follows the intent alone (0.83). It *needs* the
+  signal: `actionX` alone gives 0.43 with a left/right asymmetry. So the diffusion stage
+  should condition on the P4 readout's direction *and* render motion through a structured
+  warp/flow, not a free residual — report §7.12, §9. (The sidecar's literal
+  `targetDoorwayId` is a laggy intent — 0.55 turn agreement at click onset — vs 0.87 for
+  the door nearest to the click.)
 - The counterfactual shows a rightward turn bias traced to the pilot's heading
   imbalance (42.5% positive / 57.5% negative heading changes).
 - The learning curve is flat: 10% of the data already matches 100% (val L1 0.0122 vs

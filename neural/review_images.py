@@ -8,6 +8,11 @@
   3. counterfactual.png— ~3 contexts with doors on both sides, rolled forward
                          under "click left / right / no click", a few time steps.
 
+All contexts are drawn from DISTINCT val episodes, mid-episode (never the start of
+an episode, never consecutive starts of one episode). The counterfactual requires
+two reachable doors on opposite sides of centre that are both close enough to see
+(screenDistance < 2 world units).
+
 Drawn through the loader + the model (never by reading PNGs directly). Uses
 matplotlib (Agg); nearest-neighbour so pixels stay crisp when enlarged.
 """
@@ -29,6 +34,7 @@ from eval_harness import _torch_to_u8, rollout
 from model import load_checkpoint
 
 _HEADING_EPS = np.deg2rad(0.5)
+_DOOR_NEAR = 2.0   # world units
 
 
 def _action_str(a):
@@ -36,11 +42,19 @@ def _action_str(a):
     return "null" if np.isnan(ax) else f"{ax:+.2f}"
 
 
+def _mid_episode(packed, e, s):
+    L = packed.episodes[int(e)]["length"]
+    return 0.1 * L <= s <= 0.8 * L
+
+
 def _select_turn_windows(packed, sidecar, K, n_turn, n_steady):
-    """Return (turning windows, steady windows) as (episode, start) lists."""
+    """Return (turning windows, steady windows) as (episode, start) lists,
+    one per episode, mid-episode, strongest turn first."""
     ep, start = packed.enumerate_windows("val", K, 1, require_safe=True)
     turns, steady = [], []
     for e, s in zip(ep.tolist(), start.tolist()):
+        if not _mid_episode(packed, e, s):
+            continue
         d = sidecar.heading_change(e, s + K - 1)
         if np.isnan(d):
             continue
@@ -110,12 +124,18 @@ def make_predictions_image(packed, model, K, out_path, sidecar, n_turn=6, n_stea
 
 
 def make_rollouts_image(packed, model, K, out_path, steps=40, stride=4, n_clips=3):
-    # pick 3 val clips with room for the rollout
+    # pick 3 val clips from distinct episodes, mid-episode, with room for the rollout
     ep, start = packed.enumerate_windows("val", K, 1, require_safe=True)
-    clips = []
+    clips, seen = [], set()
     for e, s in zip(ep.tolist(), start.tolist()):
-        if s + K + steps <= packed.episodes[int(e)]["length"]:
-            clips.append((e, s))
+        if not _mid_episode(packed, e, s):
+            continue
+        if s + K + steps > packed.episodes[int(e)]["length"]:
+            continue
+        if int(e) in seen:
+            continue
+        seen.add(int(e))
+        clips.append((int(e), int(s)))
         if len(clips) >= n_clips:
             break
     cols = list(range(0, steps, stride))
@@ -145,18 +165,25 @@ def make_rollouts_image(packed, model, K, out_path, steps=40, stride=4, n_clips=
 
 def make_counterfactual_image(packed, model, K, out_path, sidecar, steps=15,
                               n_contexts=3, eps=0.05, show_steps=(1, 4, 8, 12, 15)):
+    # distinct episodes, mid-episode, both doors reachable + close enough to see
     ep, start = packed.enumerate_windows("val", K, 1, require_safe=True)
-    contexts = []
+    contexts, seen = [], set()
     for e, s in zip(ep.tolist(), start.tolist()):
+        if not _mid_episode(packed, e, s):
+            continue
         g = s + K - 1
         if g + 1 + steps > packed.episodes[int(e)]["length"]:
             continue
+        if int(e) in seen:
+            continue
         cands = [c for c in sidecar.candidates_at(e, g) if c["reachable"]]
-        xs = [c["screenX"] for c in cands]
-        left = [x for x in xs if x < -eps]
-        right = [x for x in xs if x > eps]
+        left = [c for c in cands if c["screenX"] < -eps and c["screenDistance"] < _DOOR_NEAR]
+        right = [c for c in cands if c["screenX"] > eps and c["screenDistance"] < _DOOR_NEAR]
         if left and right:
-            contexts.append((e, s, min(left), max(right)))
+            seen.add(int(e))
+            l = min(left, key=lambda c: c["screenDistance"])
+            r = min(right, key=lambda c: c["screenDistance"])
+            contexts.append((int(e), int(s), l["screenX"], r["screenX"]))
         if len(contexts) >= n_contexts:
             break
 
@@ -179,11 +206,13 @@ def make_counterfactual_image(packed, model, K, out_path, sidecar, steps=15,
                 axs[r, cj].imshow(preds[t - 1], interpolation="nearest")
                 axs[r, cj].set_xticks([]); axs[r, cj].set_yticks([])
                 axs[r, cj].set_title(f"t={t}", fontsize=8)
-            axs[ci * len(rows) + ri, 0].set_ylabel(
-                f"ep{e} {lab} aX={x:+.2f}", fontsize=8)
+            ylab = f"{lab}\naX={x:+.2f}"
+            if ri == 0:                       # episode label once per context group
+                ylab = f"ep{e}\n" + ylab
+            axs[ci * len(rows) + ri, 0].set_ylabel(ylab, fontsize=7)
     fig.suptitle("counterfactual.png — same context rolled under left/right/no click",
                  fontsize=10)
-    fig.tight_layout(rect=[0, 0, 1, 0.97])
+    fig.tight_layout(rect=[0.16, 0, 1, 0.97])
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     fig.savefig(out_path, dpi=140)
     plt.close(fig)

@@ -18,6 +18,20 @@ Stage 4 adds the first model and the reusable evaluation harness. What exists:
 - `train.py` — config-driven training (seeded, checkpoints + loss curves).
 - `train_multistep.py` — autoregressive multi-step training with turn-onset
   oversampling (used in the "why action conditioning is hard" investigation).
+- `train_future.py` — H-step teacher-forced lookahead training + horizon ablation +
+  counterfactual (the objective that made the model action-responsive, §7.7).
+- `train_hold.py` — deployment-realistic hold-last conditioning (future = `a_{t-1}`
+  repeated) + click-onset / quiet-onset ablation (§7.8).
+- `probe_click.py` — the redesigned click-direction counterfactual: distinct
+  mid-episode contexts, close doors on both sides, "click vs hold" shifts (§7.7).
+- `head_predict.py` — P4: direct heading predictor (pixels + actions → signed heading
+  change) showing the turn direction is extractable at the oracle ceiling (§7.10).
+- `train_hold_aux.py` — P5: hold-last frame model with a training-only auxiliary heading
+  head, showing the direction stays in the bottleneck and does not reach the frames
+  (§7.11).
+- `train_intent.py` — P6: hold-last frame model with an explicit oracle-intent input and
+  (optionally) a structured warp output, showing a ~7 px view shift needs both an
+  explicit direction signal and a differentiable warp, not a free pixel residual (§7.12).
 - `onset_effect.py` — quantifies the action's true effect on the next frame in
   pixels (investigation Step 0).
 - `pathway_sanity.py` — synthetic shift task proving the action-conditioning
@@ -245,9 +259,23 @@ reference every model must beat; the harness evaluates it on the same windows.
 does **not** use the action — the true/zeroed/shuffled/shifted ablation ties, and
 the counterfactual direction test fails. The cause is the action's tiny per-step
 effect at 20 Hz (~0.03 px, accumulating only over ~10 frames), documented in
-`docs/STAGE4-REPORT.md` §7 along with what was tried. Any future model should be
-judged with the horizon ablation and counterfactual metrics, not one-step pixel
-error alone.
+`docs/STAGE4-REPORT.md` §7 along with what was tried. **What works, and its limit**:
+an H≈10-step teacher-forced lookahead objective (`train_future.py`) makes the same
+model decisively action-responsive (shuffled lookahead actions 38% worse) — but the
+direction comes from the *true future* action sequence's click "change events"; the
+deployment-realistic hold-last form (`train_hold.py`) keeps only "turn presence",
+not direction (§7.8). The direction *is* extractable from pixels + actions — a direct
+heading readout (`head_predict.py`) hits the oracle ceiling (0.85 vs 0.87) — but it
+does **not** flow through a pixel-loss-trained frame decoder: an auxiliary heading head
+on the hold-last model reads direction at 0.89 yet the frames stay direction-blind
+(§7.11). P6 closes the loop: the generator *can* render a ~7 px view shift, but only as
+a structured warp of the last frame driven by an explicit direction signal (both-correct
+0.87, ratio 0.65) — a free pixel residual stays direction-blind even when told the
+direction (§7.12). So the diffusion stage should condition the generator on an explicit
+direction signal *and* render motion through a differentiable warp/flow — see §9. Any
+future model should be judged with the horizon ablation, the redesigned click
+counterfactual (`probe_click.py`), and the heading-readout accuracy (`head_predict.py`),
+not one-step pixel error alone.
 
 ## 8. Training
 

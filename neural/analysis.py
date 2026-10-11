@@ -28,6 +28,12 @@ class Analysis:
         self.omega = np.full(packed.num_frames, np.nan, dtype=np.float32)
         # per-frame doorway candidates (list of {doorwayId, screenX, reachable, screenDistance})
         self.candidates = [None] * packed.num_frames
+        # sticky target intent fields (targetDoorwayId + target/player world pose)
+        self.targetX = np.full(packed.num_frames, np.nan, dtype=np.float32)
+        self.targetZ = np.full(packed.num_frames, np.nan, dtype=np.float32)
+        self.playerX = np.full(packed.num_frames, np.nan, dtype=np.float32)
+        self.playerZ = np.full(packed.num_frames, np.nan, dtype=np.float32)
+        self.targetDoor = [None] * packed.num_frames
 
         path = os.path.join(packed.path, "analysis.jsonl")
         offsets = {e["episode_index"]: e["frame_offset"] for e in packed.episodes}
@@ -41,6 +47,13 @@ class Analysis:
                     self.heading[g] = float(row["playerHeading"])
                 if "playerOmega" in row and row["playerOmega"] is not None:
                     self.omega[g] = float(row["playerOmega"])
+                for key, arr in (("targetPointX", self.targetX), ("targetPointZ", self.targetZ),
+                                 ("playerX", self.playerX), ("playerZ", self.playerZ)):
+                    v = row.get(key)
+                    if v is not None:
+                        arr[g] = float(v)
+                if row.get("targetDoorwayId") is not None:
+                    self.targetDoor[g] = row["targetDoorwayId"]
                 cand = row.get("candidates")
                 if cand is not None:
                     self.candidates[g] = [
@@ -67,6 +80,32 @@ class Analysis:
         e = self.packed.episodes[episode]
         cand = self.candidates[e["frame_offset"] + frame]
         return cand if cand is not None else []
+
+    def target_screen_x(self, episode: int, frame: int) -> float:
+        """screenX of the sticky target door, or NaN if no target is set."""
+        e = self.packed.episodes[episode]
+        td = self.targetDoor[e["frame_offset"] + frame]
+        if td is None:
+            return float("nan")
+        for c in self.candidates_at(episode, frame):
+            if c["doorwayId"] == td:
+                return float(c["screenX"])
+        return float("nan")
+
+    def heading_error(self, episode: int, frame: int) -> float:
+        """Signed heading error to the sticky target point, wrapped to ±pi.
+
+        Positive = target is to the right of the current heading (turn right).
+        NaN if no target point or no pose is available.
+        """
+        e = self.packed.episodes[episode]
+        g = e["frame_offset"] + frame
+        tx, tz = self.targetX[g], self.targetZ[g]
+        px, pz = self.playerX[g], self.playerZ[g]
+        h = self.heading[g]
+        if any(np.isnan(v) for v in (tx, tz, px, pz, h)):
+            return float("nan")
+        return float((np.arctan2(tz - pz, tx - px) - h + np.pi) % (2 * np.pi) - np.pi)
 
 
 def load_analysis(packed) -> Analysis:

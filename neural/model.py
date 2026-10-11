@@ -106,7 +106,7 @@ class FilmUNet(nn.Module):
     """
 
     def __init__(self, in_ch: int, K: int, out_ch: int = 3, base: int = 32,
-                 cond_dim: int = 64):
+                 cond_dim: int = 64, n_act: int | None = None):
         super().__init__()
         self.enc1 = ConvBlock(in_ch, base)
         self.down1 = nn.Conv2d(base, base * 2, 3, stride=2, padding=1, bias=False)
@@ -125,9 +125,10 @@ class FilmUNet(nn.Module):
         self.dec1 = ConvBlock(base * 2, base)  # up1 + skip enc1
         self.out = nn.Conv2d(base, out_ch, 3, padding=1)
 
+        self.n_act = K if n_act is None else n_act
         self._film_chs = [base * 4, base * 2, base]  # bottleneck, dec2, dec1
         self.film_mlp = nn.Sequential(
-            nn.Linear(K * 2, cond_dim), nn.ReLU(),
+            nn.Linear(self.n_act * 2, cond_dim), nn.ReLU(),
             nn.Linear(cond_dim, 2 * sum(self._film_chs)),
         )
 
@@ -212,6 +213,7 @@ DEFAULT_MODEL_CONFIG = {
     "action_channels": 2,
     "base": 32,
     "conditioning": "channels",  # "channels" (broadcast) or "film" (FiLM at scales)
+    "n_action_frames": None,     # film only: number of action frames to condition on
 }
 
 
@@ -219,7 +221,8 @@ def build_model(config: dict) -> NextFrameModel:
     K = config["K"]
     base = config.get("base", 32)
     if config.get("conditioning", "channels") == "film":
-        net = FilmUNet(in_ch=K * 3, K=K, out_ch=3, base=base)
+        net = FilmUNet(in_ch=K * 3, K=K, out_ch=3, base=base,
+                       n_act=config.get("n_action_frames"))
         return NextFrameModel(net, K, use_film=True)
     in_ch = K * (3 + config.get("action_channels", 2))
     net = UNetBaseline(in_ch=in_ch, out_ch=3, base=base)
