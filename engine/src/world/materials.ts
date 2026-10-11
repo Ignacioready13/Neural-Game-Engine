@@ -14,9 +14,15 @@
  * colors with no canvas textures.
  */
 import * as THREE from 'three';
+import type { EntityDescriptor } from '../core/types';
 
 /** One texture repeat spans this many world units (one tile = 1 world unit). */
 export const TILE_WORLD_SIZE = 2;
+
+/** World units per visible ceiling tile: the ceiling texture draws a 2x2 grid
+ * of grout squares per TILE_WORLD_SIZE repeat, so a single square tile is half
+ * the repeat. */
+export const CEILING_TILE = TILE_WORLD_SIZE / 2;
 
 const TEX = 256;
 
@@ -91,15 +97,45 @@ function drawFloor(ctx: CanvasRenderingContext2D): void {
 }
 
 function drawWall(ctx: CanvasRenderingContext2D): void {
-  const base: [number, number, number] = [178, 170, 132];
-  drawGrid(ctx, base, 0.06, 'rgb(120,114,88)', 140, (c, x0, y0) => {
-    // baseboard along the bottom of every cell
-    c.fillStyle = shade(base[0], base[1], base[2], 0.62);
-    c.fillRect(x0, y0 + TEX / 2 - 18, TEX / 2, 18);
-    // chair rail ~1/3 up
-    c.fillStyle = shade(base[0], base[1], base[2], 0.82);
-    c.fillRect(x0, y0 + Math.floor((TEX / 2) * 0.34), TEX / 2, 5);
-  });
+  // Yellowing wallpaper: a dull warm-yellow base with very faint vertical
+  // striping and mottled speckling, plus a dark baseboard at the floor. No grid
+  // lines — the texture is seamless by construction (periodic stripes + speckles
+  // drawn per wrapped cell).
+  const base: [number, number, number] = [196, 186, 130];
+  const T = TEX;
+
+  ctx.fillStyle = shade(base[0], base[1], base[2], 1);
+  ctx.fillRect(0, 0, T, T);
+
+  // Very subtle vertical wallpaper stripes (periodic, so they tile seamlessly).
+  const stripes = 8;
+  const sw = T / stripes;
+  for (let i = 0; i < stripes; i++) {
+    const rng = cellRng(i, 7);
+    ctx.fillStyle = shade(base[0], base[1], base[2], 0.965 + 0.06 * rng());
+    ctx.fillRect(Math.round(i * sw), 0, Math.ceil(sw) + 1, T);
+  }
+
+  // Fine mottling / faint stains, drawn per wrapped cell so it tiles seamlessly.
+  const cells = 4;
+  const cell = T / cells;
+  for (let i = 0; i < cells; i++) {
+    for (let j = 0; j < cells; j++) {
+      const rng = cellRng(i, j);
+      for (let k = 0; k < 26; k++) {
+        const x = i * cell + rng() * cell;
+        const y = j * cell + rng() * cell;
+        ctx.fillStyle = shade(base[0], base[1], base[2], 1 + (rng() - 0.5) * 0.1);
+        ctx.fillRect(x, y, 1.8, 1.8);
+      }
+    }
+  }
+
+  // Baseboard along the floor (canvas bottom maps to world y=0 via flipY).
+  ctx.fillStyle = shade(base[0], base[1], base[2], 0.56);
+  ctx.fillRect(0, T - 26, T, 26);
+  ctx.fillStyle = shade(base[0], base[1], base[2], 0.74);
+  ctx.fillRect(0, T - 28, T, 2);
 }
 
 function drawCeiling(ctx: CanvasRenderingContext2D): void {
@@ -121,6 +157,46 @@ function makeTexture(draw: (ctx: CanvasRenderingContext2D) => void): THREE.Canva
   tex.magFilter = THREE.LinearFilter;
   tex.minFilter = THREE.LinearMipmapLinearFilter;
   return tex;
+}
+
+/**
+ * Ceiling-tile grid helpers. The ceiling texture is drawn as a 2x2 grid of
+ * grout squares repeated every TILE_WORLD_SIZE world units, so its tile centers
+ * sit at CEILING_TILE/2 + k*CEILING_TILE in the *unshifted* texture. To make a
+ * hallway's center line (or a room's center) run through a tile center — so the
+ * lit tile reads as centered — the ceiling texture is shifted per entity. Both
+ * the texture offset (geometry.ts) and the fixture snapping (scene.ts) derive
+ * from the same anchor so they can never disagree.
+ */
+
+/** Nearest tile center to a world coordinate in the unshifted tile grid. */
+export function nearestTileCenter(v: number): number {
+  const half = CEILING_TILE / 2;
+  return Math.round(v - half) + half;
+}
+
+/** UV offset that shifts the ceiling texture so a tile center lands exactly on
+ * world coordinate `v` (tile centers then sit at v + k*CEILING_TILE). */
+export function tileCenterUvOffset(v: number): number {
+  return (nearestTileCenter(v) - v) / TILE_WORLD_SIZE;
+}
+
+/** Snap a world coordinate to the nearest tile center of an entity's ceiling
+ * grid, given that grid's anchor coordinate (tile centers at anchor + k*CEILING_TILE). */
+export function snapToCeilingTile(v: number, anchor: number): number {
+  return Math.round((v - anchor) / CEILING_TILE) * CEILING_TILE + anchor;
+}
+
+/** Anchor world coordinates whose ±integer offsets are the ceiling-tile centers
+ * for one entity. Hallways center a tile column on their center line and keep the
+ * along-corridor grid unshifted; rooms center the grid on their footprint center. */
+export function ceilingAnchors(desc: EntityDescriptor): { ax: number; az: number } {
+  if (desc.kind === 'room') {
+    return { ax: desc.center!.x, az: desc.center!.z };
+  }
+  const half = CEILING_TILE / 2;
+  if (desc.axis === 'x') return { ax: half, az: desc.start!.z };
+  return { ax: desc.start!.x, az: half };
 }
 
 export interface WorldMaterials {

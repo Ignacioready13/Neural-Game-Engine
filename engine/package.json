@@ -15,7 +15,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "generate": "tsx src/headless/cli.ts",
-    "record": "tsx src/headless/record.ts"
+    "record": "tsx src/headless/record.ts",
+    "report": "tsx src/headless/report.ts"
   },
   "dependencies": {
     "three": "^0.170.0",

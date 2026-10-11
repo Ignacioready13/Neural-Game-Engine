@@ -13,7 +13,7 @@ import type { Cardinal, EntityDescriptor, Vec2 } from '../core/types';
 import { CARDINAL_VEC, OPPOSITE } from '../core/types';
 import type { EngineConfig } from '../../config/config';
 import { vecAdd, vecScale, vecRotate90, vecRotateNeg90 } from '../core/math';
-import { createMaterials, TILE_WORLD_SIZE, WorldMaterials } from './materials';
+import { createMaterials, TILE_WORLD_SIZE, WorldMaterials, ceilingAnchors, tileCenterUvOffset } from './materials';
 import { leftOf, rightOf } from './layout';
 
 export interface BuildOptions {
@@ -561,6 +561,16 @@ export function buildEntityGroup(
 ): THREE.Group {
   const group = new THREE.Group();
   const mats = createMaterials();
+  // Center the ceiling tile grid on the entity (a tile center on the hallway
+  // center line / room center) so the lit tile reads as centered. Floor and
+  // walls keep the unshifted world-space grid.
+  if (mats.ceiling.map) {
+    const anchors = ceilingAnchors(descriptor);
+    mats.ceiling.map.offset.set(
+      tileCenterUvOffset(anchors.ax),
+      tileCenterUvOffset(anchors.az),
+    );
+  }
   if (descriptor.kind === 'room') {
     buildRoom(group, mats, descriptor, config);
   } else {

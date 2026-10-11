@@ -13,6 +13,7 @@ import type { EngineConfig } from '../../config/config';
 import type { Doorway, Entity, FrameSnapshot, PlayerState } from '../core/types';
 import { clamp } from '../core/math';
 import { BackroomsScene } from './scene';
+import type { EntityLights } from './scene';
 import { ResolutionPipeline } from './resolution';
 import { BlackoutManager } from './blackout';
 
@@ -67,7 +68,7 @@ export class Renderer {
   // Live entities, tracked by descriptor id so we can add new groups and drop
   // disposed ones without ever touching the world generator's geometry.
   private readonly entityGroups = new Map<string, THREE.Group>();
-  private readonly entityLights = new Map<string, THREE.PointLight[]>();
+  private readonly entityLights = new Map<string, EntityLights>();
 
   // Click-pulse overlay (screen-space, drawn after the downsample blit).
   private readonly overlayCamera: THREE.OrthographicCamera;

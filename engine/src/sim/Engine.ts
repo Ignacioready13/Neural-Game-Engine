@@ -65,6 +65,12 @@ export class Engine {
   private lastOverlapWarnTime = Number.NEGATIVE_INFINITY;
   private collisionEvents = 0;
 
+  // Per-step diagnostics (exposed read-only via getState for the data contract):
+  // whether the wall-slide backstop engaged THIS step (L2/L3 detection), and the
+  // acceptance result of the click submitted THIS step (clickAccepted field).
+  private slidThisStep = false;
+  private clickAcceptedThisStep: boolean | null = null;
+
   constructor(config: EngineConfig, seed: number, canvas: HTMLCanvasElement) {
     this.config = config;
     this.seed = seed;
@@ -92,9 +98,13 @@ export class Engine {
   step(): void {
     const dt = this.config.simTimestep;
 
+    // Reset per-step diagnostics (set below if the corresponding event occurs).
+    this.slidThisStep = false;
+    this.clickAcceptedThisStep = null;
+
     // Process any new click (debounce + pulse handled in Steering).
     if (this.pendingClickX !== null) {
-      this.steering.handleClick(this.pendingClickX, this.simulatedTime);
+      this.clickAcceptedThisStep = this.steering.handleClick(this.pendingClickX, this.simulatedTime).accepted;
       this.pulses.push({ screenX: this.pendingClickX, ageSeconds: 0 });
       this.pendingClickX = null;
     }
@@ -126,6 +136,7 @@ export class Engine {
     const stepped = this.steering.step(this.player, this.currentTargetPoint, dt);
     this.player = resolveWallCollision(this.world, this.player, stepped, () => {
       this.collisionEvents += 1;
+      this.slidThisStep = true;
     });
 
     // Entity tracking with HYSTERESIS: only leave the active entity once it no
@@ -194,6 +205,14 @@ export class Engine {
     collisionEvents: number;
     /** Raw last accepted click X (null before any click) — debug only. */
     lastClickedX: number | null;
+    /** True once at least one click has ever been accepted (false = the engine
+     * is still in its "never clicked" default mode). */
+    hasAcceptedClick: boolean;
+    /** Acceptance result of the click submitted THIS step: true accepted, false
+     * debounce-ignored, null no click submitted this step. */
+    clickAccepted: boolean | null;
+    /** True if the wall-slide backstop engaged THIS step (used for L2/L3). */
+    slidThisStep: boolean;
     /** Currently selected target doorway id (null when none). */
     targetDoorwayId: string | null;
     /** Current steering target point (world space), or null when none. */
@@ -212,6 +231,9 @@ export class Engine {
       wallOverlap: this.wallOverlap,
       collisionEvents: this.collisionEvents,
       lastClickedX: this.steering.lastClickedX,
+      hasAcceptedClick: this.steering.lastClickedX !== null,
+      clickAccepted: this.clickAcceptedThisStep,
+      slidThisStep: this.slidThisStep,
       targetDoorwayId: this.targetDoorwayId,
       targetPoint: this.currentTargetPoint ? { x: this.currentTargetPoint.x, z: this.currentTargetPoint.z } : null,
       targetPhase: this.targetPhase,

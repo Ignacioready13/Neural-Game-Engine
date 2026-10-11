@@ -201,29 +201,79 @@ export interface FrameSnapshot {
   frameIndex: number;
 }
 
-/** One frame's record in the training manifest (Section 10.2). */
+/**
+ * One frame's record in the training manifest (schema v2).
+ *
+ * Alignment rule: the action for the transition from frame i to frame i+1 is
+ * `actionX[i]`. `controlSignalX[i]` is the signal held AT capture time; training
+ * must use `actionX`.
+ */
 export interface FrameRecord {
   frameIndex: number;
   simulatedTime: number;
   imagePath: string;
-  /** The held control signal: normalized screen-space click X, -1..1. */
+  /** The held control signal AT capture time: normalized screen-space click X,
+   * -1..1 (0 before the first accepted click). */
   controlSignalX: number;
-  // Debug-only fields (NOT fed to the neural network):
+  /** Held signal in effect during the step i -> i+1 (i.e. controlSignalX on the
+   * next frame). Null on the final frame (no step follows). */
+  actionX: number | null;
+  /** Whether >=1 click had been accepted as of the step i -> i+1 (false = the
+   * engine is in its "never clicked" default mode). Null on the final frame. */
+  actionHasClicked: boolean | null;
+  /** Raw click X submitted for the step i -> i+1, or null. */
+  clickX: number | null;
+  /** true = engine accepted the click; false = debounce ignored it; null = no
+   * click submitted for that step. */
+  clickAccepted: boolean | null;
+  // Lightweight context (NOT fed to the neural network):
   playerX: number;
   playerZ: number;
   playerHeading: number;
   currentEntityId: string;
 }
 
-/** Episode-level manifest metadata (Section 10.2). */
+/** One frame's debug/telemetry record (schema v2), kept separable from the
+ * minimal training fields so a data loader can ignore them cheaply. */
+export interface DebugFrame {
+  frameIndex: number;
+  playerOmega: number;
+  lastClickedX: number | null;
+  targetDoorwayId: string | null;
+  targetPointX: number | null;
+  targetPointZ: number | null;
+  targetPhase: string;
+  collisionEvents: number;
+  wallOverlap: boolean;
+  candidates: Array<{ doorwayId: string; screenX: number; reachable: boolean; screenDistance: number }>;
+  /** Persona active when this step's click decision was made. */
+  persona: string;
+  /** Doorway the bot aimed at for this step's click, or null. */
+  intentDoorwayId: string | null;
+  /** Whether the wall-slide backstop engaged during the step i -> i+1 (aligned
+   * with actionX). */
+  slid: boolean;
+}
+
+/** Episode-level manifest metadata (schema v2, Section 10.2). */
 export interface EpisodeManifest {
+  schemaVersion: 2;
   episodeId: string;
+  seed: number;
+  /** Split name from the run plan (train / val / test). */
+  split: string;
+  /** Mixture profile name this episode was generated under. */
+  profile: string;
   renderWidth: number;
   renderHeight: number;
   outputWidth: number;
   outputHeight: number;
   simTimestep: number;
-  seed: number;
+  // Provenance (Section 4.4):
+  configHash: string;
+  engineCommit: string;
+  dirty: boolean;
+  engineSourceHash: string;
   config: {
     jerkThreshold: number;
     hallwayWidth: number;
@@ -242,4 +292,33 @@ export interface EpisodeManifest {
     fovHorizontalDeg: number;
   };
   frames: FrameRecord[];
+  debugFrames: DebugFrame[];
+  // Clipping failsafe (Section 4.11):
+  truncated: boolean;
+  truncationReason: string | null;
+  crashFrameIndex: number | null;
+  trimmedFrames: number;
+  /** Written LAST; a partial episode never carries it. */
+  complete: boolean;
+}
+
+/** One line of the plan's `aborted.jsonl` (Section 4.11). */
+export interface AbortRecord {
+  episodeId: string;
+  seed: number;
+  split: string;
+  persona: string;
+  level: 'L1' | 'L2';
+  reason: string;
+  crashFrameIndex: number;
+  framesKept: number;
+  clickSequence: Array<{ frameIndex: number; clickX: number }>;
+  stateDump: Array<{
+    frameIndex: number;
+    x: number;
+    z: number;
+    heading: number;
+    entityId: string;
+    targetDoorwayId: string | null;
+  }>;
 }

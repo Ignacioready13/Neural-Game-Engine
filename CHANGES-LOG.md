@@ -7,6 +7,47 @@ and `engine/docs/CONTRACTS.md`. This file replaces the old `handoff.md`.
 
 ---
 
+## 2026-10-10 — Stage 2: action labels, click-bot personas, resumable runs, pilot
+
+**Asked.** Implement Stage 2 of the training-data generator (brief
+`stage2-prompt-bots-labels-pilot.txt`): unambiguous action-aligned labels
+(4.1–4.4), a click-bot persona framework whose choices spread uniformly at
+*choice moments* rather than always picking the straightest door (4.6), run
+plans with resumable split-aware batch runs (4.7), a diagnostics report (4.8),
+doc drift fixes (4.9), the pilot dataset + review images (4.10), and the
+clipping failsafe (4.11). Simulation behavior (world gen, steering, reachability,
+debounce, collision, timing, RNG) was **not** changed.
+
+**Built.** `src/headless/bot.ts` (seven personas + three mixture profiles, bot
+RNG separate from world RNG), `src/headless/driver.ts` (v2 manifest, action
+alignment, clipping failsafe, scripted `botOverride`), `src/headless/plan.ts`
++ `src/headless/workerPool.ts` (`runPlan`: resume, disjoint seed ranges,
+deterministic episode dirs, retry-once, early-stop), `src/headless/cli.ts`
+(plan CLI + legacy flags), `src/headless/provenance.ts` (configHash /
+engineCommit / dirty / engineSourceHash), `src/headless/report.ts` (the ten
+4.8 items), `docs/DATASET-SCHEMA.md` (the data contract). The click pulse
+overlay was removed from captured frames (4.5a).
+
+**Key findings.**
+- *Section 3.* The earlier "three signal bins (0 / +1 / −1)" observation does
+  **not** reproduce: the real placeholder bot's held-signal histogram is spread
+  across all 0.1 bins, exactly as the held-signal model predicts. The signal
+  path is correct; the old number was an earlier-investigation artifact. No
+  engine change.
+- *4.6 straightest-target.* The literal per-frame criterion reads **88.7%**
+  (above the ~65% threshold) — but this is the per-frame-vs-moments confound
+  §3(b) already flags: the `uniform` persona (uniform random X) also reads
+  90.2%. Measured at real choice moments (accepted clicks with 2+ reachable),
+  the straightest-choice rate is **48.8%** — i.e. choices are spread ~uniformly
+  as intended. No tuning applied (see STAGE2-REPORT for the reasoning).
+
+**Verification.** `tsc --noEmit` clean; 56 vitest tests pass (action alignment,
+run plans, provenance, failsafe trim + delete paths). Pilot `engine/data/pilot_v1/`:
+150 episodes (145 complete + 5 aborted = 3.3%), 88,047 frames, 6.70 GB, 134 s
+on the RTX 5070. Diagnostics report and review images written to the pilot dir.
+
+---
+
 ## 2026-10-08 — Config-drift world-generation fix + single-sided walls + wall thickness
 
 **Asked (three requests):** (1) make the world generator resilient to the
@@ -133,6 +174,13 @@ the corner) for the through leg, and per-doorway gate radii
 (`TURN_GATE_RADIUS` = 2.5 for bends, `DOORWAY_TURN_GATE_RADIUS` = 1.5 for tight
 turns). Regression tests steer the real pipeline through every bend / side
 doorway / junction turn and assert perpendicular entry with no pinning.
+
+**Correction (2026-10-10, Stage 2).** The "per-doorway gate radii" description
+above is wrong. `DOORWAY_TURN_GATE_RADIUS` does not exist in `config.ts`, and
+`Doorway.gateRadius` is never assigned. Only **bend** doorways set `turn: true`
+and an `approachPoint`; side doorways and junction turns use the ordinary entry
+waypoint. The two-phase model therefore applies to bends, and tight side /
+junction turns are not gated. The README config table was corrected accordingly.
 
 ---
 

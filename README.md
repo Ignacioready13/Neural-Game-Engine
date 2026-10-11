@@ -7,7 +7,9 @@ a neural network (the "dynamics model"). The classical engine is a *teacher*,
 not a permanent game: every design decision favors clean, consistent,
 information-rich training signal.
 
-The full build specification lives in `backrooms-engine-build-prompt.txt`.
+The definitive architecture and data contract are this file, `CHANGES-LOG.md`,
+`engine/docs/DATASET-SCHEMA.md`, and `engine/docs/CONTRACTS.md`. (The original
+Phase 1 build prompt is historical; see `engine/docs/historical/`.)
 
 ## Two-phase architecture
 
@@ -16,8 +18,9 @@ The full build specification lives in `backrooms-engine-build-prompt.txt`.
    core:
    - **Human play** — point-and-click navigation through procedurally generated
      hallways and rooms, via the Vite dev server.
-   - **Headless generation** — the same engine driven by a minimal placeholder
-     bot in headless Chromium (Puppeteer), writing frames + labels to `/data`.
+   - **Headless generation** — the same engine driven by a persona-based click-bot
+     framework in headless Chromium (Puppeteer), writing frames + labels to
+     `engine/data/` under resumable run plans.
 2. **`/neural`** (future, out of scope) — a Python/PyTorch neural network that
    learns to generate the frames itself, conditioned on the control signal and
    a short window of its own prior frames. It is fully independent of this
@@ -36,11 +39,15 @@ The full build specification lives in `backrooms-engine-build-prompt.txt`.
     /render/  three.js scene, lighting/flicker, fog, resolution pipeline
     /sim/     Engine.ts — the shared orchestrator used by BOTH modes
     /app/     main-interactive.ts (human) and main-headless.ts (bot)
-    /headless/ Puppeteer driver, worker pool, placeholder bot, manifest writer
+    /headless/ Puppeteer driver, plan runner, click-bot framework, manifest
+               writer, diagnostics report, CLI
   /tests/     vitest rule-verification + unit tests
-  /docs/      CONTRACTS.md — subsystem integration contract
+  /docs/      CONTRACTS.md, DATASET-SCHEMA.md, PLANNING-ANSWERS.md
 /neural/      empty placeholder for the future neural codebase
 /data/        default output root for generated datasets (gitignored)
+```
+
+The default output root is `engine/data/` (gitignored), not `/data`.
 ```
 
 ## Requirements
@@ -92,29 +99,78 @@ than the built bundle (see `src/headless/stale.ts`).
 
 ```bash
 cd engine
-npm run build        # produce dist/ (index.html + headless.html)
-npm run generate     # run one episode with the placeholder bot, write to /data
+npm run build         # produce dist/ (index.html + headless.html)
+npm run generate      # run a plan (or a single episode) with the click-bot framework
+npm run report -- engine/data/pilot_v1   # write report.json + report.md for a dataset
 ```
 
-`npm run generate` forwards arguments to `src/headless/cli.ts`:
+Generation is **plan-based and resumable**. A plan names a dataset, its mixture
+profile, frames per episode, and an explicit list of `(seed, split, profile)`
+episodes with disjoint seed ranges per split. The CLI can generate a plan and
+run one:
+
+```bash
+# Write a plan (no generation yet):
+npm run generate -- --make-plan pilot_v1 --train 120 --val 15 --test 15 \
+  --frames 600 --profile mixture --output engine/data
+
+# Run it (resumable; skips complete episodes, deletes+redoes partial ones,
+# retries an infra crash once):
+npm run generate -- --plan engine/data/pilot_v1.plan.json --concurrency 8
+```
+
+Options (see `npm run generate -- --help`):
 
 ```
---concurrency <n>   simultaneous headless Chromium instances (default 4)
---episodes <n>      number of episodes to generate (default 1)
---frames <n>        frames per episode (default 600 = 30 simulated seconds @20Hz)
---seed <n>          RNG seed (default: random per episode)
---output <dir>      output root (default: <repo>/data)
---serve-port <n>    port for the built-page static server (default 4587)
---build             rebuild dist/ before generating
+--make-plan <name>   write a plan JSON at <output>/<name>.plan.json and exit
+--plan <path>        load a plan JSON and run it (resumable)
+--train/--val/--test <n>  per-split episode counts (for --make-plan)
+--profile <name>     mixture profile: mixture | uniformOnly | doorAwareOnly
+--frames <n>         frames per episode (default 600 = 30 s @20 Hz)
+--concurrency <n>    simultaneous headless Chromium instances (default 8 for plans)
+--output <dir>       output root (default: <repo>/engine/data)
+--seed <n>           base seed for the legacy single-split mode
+--episodes <n>       legacy single-split episode count (no --plan/--make-plan)
+--build              rebuild dist/ before generating
 ```
 
-Each episode writes to `data/episode_<uuid>/`:
+Episodes land in `<output>/<plan>/<split>/seed_<seed>/` (deterministic names):
 
 ```
-episode_<uuid>/
-  frames/000000.png ...   lossless PNGs at OUTPUT_RESOLUTION
-  manifest.json           episode + per-frame metadata (see below)
+pilot_v1/
+  train/seed_0/frames/000000.png ...   lossless PNGs at OUTPUT_RESOLUTION
+              manifest.json            schema-v2 metadata (see DATASET-SCHEMA.md)
+  aborted.jsonl                        clipping-failsafe records (4.11)
+  report.json / report.md              diagnostics report (4.8)
 ```
+
+The `seed_<seed>` directory names and the `episodeId` (`<plan>-<split>-<seed>`)
+are deterministic, so a batch can be interrupted and resumed, and a given seed
+always produces byte-identical frames on the same machine.
+
+### Click-bot framework and mixture profiles
+
+The single placeholder bot is replaced by a small **persona framework**. A bot
+reads the same per-frame state snapshot the logger reads, keeps its own memory
+(previous active entity, pending delayed clicks), and draws randomness from a
+generator seeded from the episode seed but **separate** from the world generator
+(so bot choices never perturb world generation).
+
+Seven personas — `idle` (no clicks), `decisive`, `late`, `dither`, `prober`,
+`spammer`, `uniform` — are mixed per ~100–300-frame segment under a named
+profile. Profiles: `mixture` (default), `uniformOnly`, `doorAwareOnly`. The
+active persona per step is logged in the manifest. Full semantics and weights
+are in `engine/docs/DATASET-SCHEMA.md` §9 and `engine/config/config.ts`.
+
+### Clipping failsafe
+
+Headless agent episodes are passed through a clipping failsafe (a safety net, not
+a fix): on a hard wall-overlap (L1) or 10 consecutive wall-slide frames (L2) the
+episode stops, the 8-second lead-in is deleted from disk, and the tail is either
+trimmed (with `truncated`/`crashFrameIndex`/`trimmedFrames`) or the whole episode
+is deleted if too little remains. Every aborted episode is recorded in
+`aborted.jsonl`; brief grazes (L3) are reported but not a crash. Details in
+`engine/docs/DATASET-SCHEMA.md` §7.
 
 ### GPU acceleration
 
@@ -132,47 +188,51 @@ on a software renderer.
 ### Worker pool
 
 `--concurrency` controls how many headless Chromium instances run at once, each
-writing its own episode directory. The default is conservative (4); tune it up
-or down based on your GPU memory and observed throughput. It is expected (and
-fine) that large-scale generation is slow in wall-clock terms — what matters is
-that each episode's simulated motion is correct and consistent, which the fixed
-timestep guarantees regardless of load.
+writing its own episode directory. The default is 4 (`WORKER_CONCURRENCY`) for
+the legacy single-split mode and 8 for plan runs. Tune it up or down based on
+your GPU memory and observed throughput. It is expected (and fine) that
+large-scale generation is slow in wall-clock terms — what matters is that each
+episode's simulated motion is correct and consistent, which the fixed timestep
+guarantees regardless of load.
 
 ## Dataset format (`manifest.json`)
 
-`manifest.json` is self-describing and unambiguous:
+The manifest is **schema v2** and self-describing. The definitive field-by-field
+contract (types, the action-alignment rule, held-signal semantics, provenance,
+truncation) is `engine/docs/DATASET-SCHEMA.md`. The short version:
 
 ```jsonc
 {
-  "episodeId": "…uuid…",
-  "renderWidth": 1280, "renderHeight": 960,   // supersampled render size
-  "outputWidth": 320,  "outputHeight": 240,   // final frame size
-  "simTimestep": 0.05,                          // seconds per simulated frame
-  "seed": 12345,
-  "config": { /* jerkThreshold, hallway/room size ranges, doorway spacing,
-                 debounceSeconds, walkSpeed, fovHorizontalDeg, … */ },
+  "schemaVersion": 2,
+  "episodeId": "pilot_v1-train-0",
+  "seed": 0, "split": "train", "profile": "mixture",
+  "outputWidth": 320, "outputHeight": 240, "simTimestep": 0.05,
+  "configHash": "…", "engineCommit": "…", "dirty": true, "engineSourceHash": "…",
   "frames": [
     {
-      "frameIndex": 0,
-      "simulatedTime": 0.0,                     // frameIndex * simTimestep
+      "frameIndex": 0, "simulatedTime": 0.0,
       "imagePath": "frames/000000.png",
-      "controlSignalX": 0.0,                    // held click-X, -1..1 (the ONE signal)
-      "playerX": 0.5, "playerZ": 1.5,           // debug-only, not fed to the model
-      "playerHeading": 1.5708,
-      "currentEntityId": "h0"
+      "controlSignalX": 0.0,   // held click-X AT capture time, -1..1
+      "actionX": 0.0,          // held click-X during step i -> i+1 (the training action)
+      "actionHasClicked": false,
+      "clickX": null, "clickAccepted": null,
+      "playerX": 0.5, "playerZ": 1.5, "playerHeading": 1.5708,
+      "currentEntityId": "h1"
     }
-    // …
-  ]
+  ],
+  "debugFrames": [ /* persona, targetDoorwayId, candidates, collisionEvents, … */ ],
+  "truncated": false, "complete": true
 }
 ```
 
-`controlSignalX` is the **held** normalized screen-space click X (step-function;
-`0` = screen-center default before the first click). It is the one and only
-per-frame signal the future model is trained on, and it is sampled on every
-simulated frame. `playerX/Z/heading` and `currentEntityId` are debug fields for
-verifying engine behavior — they are not intended to be fed to the network.
-Frames are stored as PNG (lossless) so compression artifacts don't pollute the
-training signal.
+**The alignment rule:** the action for the transition from frame `i` to `i+1` is
+`actionX[i]` (= `controlSignalX[i+1]`). Training must use `actionX`, never
+`controlSignalX`, to predict the next frame. `controlSignalX` is the held
+normalized screen-space click X (a step function; `0` = screen-center default
+before the first click), kept for compatibility and live-client semantics.
+`playerX/Z/heading` and the whole `debugFrames` section are debug context, not
+fed to the network. Frames are PNG (lossless) so compression artifacts don't
+pollute the training signal.
 
 ## Config
 
@@ -196,9 +256,8 @@ values and their defaults:
 | `DOORWAY_WIDTH` / `_HEIGHT` | 2.7 / 2.8 | opening size |
 | `DOORWAY_SPACING_FACTOR` | 3 | min center-to-center = 3× doorway width |
 | `SIDE_DOORWAY_START_CLEARANCE` | 3.0 | distance from entry wall before the first side doorway |
-| `DOORWAY_GATE_RADIUS` | 2.5 | proximity to commit to turning through a normal doorway |
+| `DOORWAY_GATE_RADIUS` | 2.5 | proximity to commit to turning through a non-bend doorway |
 | `TURN_GATE_RADIUS` | 2.5 | proximity to a bend corner to commit to the ~90° turn |
-| `DOORWAY_TURN_GATE_RADIUS` | 1.5 | turn gate radius for tight turns (side doorways, junction turns) |
 | `TURN_WAYPOINT_DEPTH` | 3.0 | how far past a turn corner/opening its waypoint sits |
 | `JERK_THRESHOLD` | 6.0 rad/s² | max angular acceleration ("jerk") |
 | `MAX_TURN_RATE` | 2.5 rad/s | soft cap on turn rate (see judgment calls) |
@@ -246,8 +305,10 @@ and are documented here rather than as scattered magic numbers:
   ceiling ranges but is silent on hallway height; kept constant.
 - **`MAX_TURN_RATE`** — an additional soft cap on turn rate beyond the mandated
   jerk threshold, so turning never becomes unrealistically fast during a long
-  turn. `desiredOmega` uses a bang-bang profile
-  `sign(err)·sqrt(2·jerk·|err|)`.
+  turn. `desiredOmega` is a proportional controller:
+  `omega = clamp(turnRateGain · headingError, ±maxTurnRate)`, whose change is
+  then limited by the jerk threshold; it converges monotonically without
+  overshoot (not a bang-bang profile).
 - **Reachability** — an approximate, conservative geometric feasibility test
   (front-cone angle + required-arc-length check); it is intentionally
   hand-tunable via `REACHABILITY_MAX_ANGLE_DEG`. Candidates are projected and
@@ -297,28 +358,26 @@ and are documented here rather than as scattered magic numbers:
   phantom opening with no collision. The generator therefore never places an
   additional doorway on the wall it entered a room through — the player can never
   be forced to enter and exit through the same wall.
-- **Turn doorways turn in two phases** — a doorway on a *side* wall (a hallway
-  bend, a side doorway into a room, or a junction branch that turns left/right)
-  sits on a wall the player drives parallel to, so it is not a normal "approach the
-  opening then step through." These are steered as: approach a point on the
-  corridor centerline (a bend: the corner; a side doorway: centerline abreast of
-  the opening; a junction turn: the node center) so the player keeps driving
-  straight down the corridor, then commit to the ~90° turn at a gate radius and
-  steer through a waypoint `TURN_WAYPOINT_DEPTH` (3) past the opening/corner. This
-  is what makes the player actually turn instead of crossing still heading straight
-  and clipping the neighbor's far wall.
-- **Tight turns use a smaller gate** — a bend turns through a full-width opening
-  (the child corridor has no wall at the corner), so it commits early at
-  `TURN_GATE_RADIUS` (2.5). A side doorway or junction turn threads a
-  `DOORWAY_WIDTH` (2.7) opening with wall on both sides; committing that early turns
-  the player toward the wall beside the opening, and they penetrate it at a shallow
-  diagonal and clip the wall perpendicular to the doorway. Those set
-  `DOORWAY_TURN_GATE_RADIUS` (1.5), committing late enough that the turn arc stays
-  inside the opening and the player crosses essentially perpendicular to it.
+- **Bend doorways turn in two phases** — only a hallway *bend* (a doorway on the
+  side wall of a corridor, the ~90° continuation) sets `turn: true` and an
+  `approachPoint` (the corner). It is steered as: approach the corner (keeping
+  straight down the corridor), then commit at `TURN_GATE_RADIUS` (2.5) and steer
+  through a waypoint `TURN_WAYPOINT_DEPTH` (3) past the corner, which carries the
+  player through the ~90° turn instead of crossing still heading straight and
+  clipping the new corridor's far wall.
+- **All other doorways are normal two-leg doorways** — a side doorway, a room
+  exit, and a junction branch that turns left/right are steered the same way: on
+  the approach leg steer at the **opening center** (the pursuit curve from
+  anywhere in the convex entity toward the boundary point at the opening stays
+  inside the entity, so it cannot clip a wall), then commit at `DOORWAY_GATE_RADIUS`
+  (2.5) and steer through the entry point. `Doorway.gateRadius` exists in the type
+  but is never assigned in the generator, so every doorway uses the two config
+  radii above (see CHANGES-LOG for the correction note; the earlier "smaller gate
+  for tight turns" description did not match the code).
 
 ## Out of scope (Phase 1)
 
-No neural network code, no intelligent bot policies (only the minimal
-placeholder bot), no internet textures/props, no world-blending/biome morphing,
-no persistent room memory, and no dependency of the trained model on this
-engine.
+No neural network code, no internet textures/props, no world-blending/biome
+morphing, no persistent room memory, and no dependency of the trained model on
+this engine. The click-bot personas (Stage 2) are coverage generators — they
+make the signal information-rich — not learned or "intelligent" policies.

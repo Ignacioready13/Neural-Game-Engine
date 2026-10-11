@@ -11,10 +11,19 @@
 import * as THREE from 'three';
 import type { EngineConfig } from '../../config/config';
 import type { EntityDescriptor, PlayerState } from '../core/types';
+import { CEILING_TILE, ceilingAnchors, snapToCeilingTile } from '../world/materials';
 
 /** How far below a ceiling the fixture lights hang (world units). Purely
  * cosmetic — kept out of config because it is not a behavioral knob. */
 const LIGHT_DROP = 0.35;
+
+/** Side length of a square ceiling-light panel, as a fraction of a ceiling tile
+ * (a recessed troffer sits inside the tile with a thin grout border around it). */
+const PANEL_SIZE = CEILING_TILE * 0.84;
+
+/** Emissive brightness of a ceiling-light panel (matches the point light so both
+ * flicker together). */
+const PANEL_EMISSIVE = 1.0;
 
 /** Point-light falloff exponent. 1.0 = gentle linear falloff that lights a
  * whole room evenly without washing it out (quadratic looked too dark at
@@ -55,6 +64,15 @@ function flickerMultiplier(config: EngineConfig, phase: number, t: number): numb
 interface Fixture {
   base: number;
   phase: number;
+  /** Emissive material of the square light panel (flickered with the point light). */
+  panel?: THREE.MeshStandardMaterial;
+}
+
+/** Per-entity overhead fixtures: the point lights (illumination) plus the square
+ * ceiling panels (the visible light). */
+export interface EntityLights {
+  lights: THREE.PointLight[];
+  panels: THREE.Mesh[];
 }
 
 export class BackroomsScene {
@@ -116,8 +134,12 @@ export class BackroomsScene {
   }
 
   /** Create and add overhead fixture lights covering one entity footprint. */
-  addEntityLights(descriptor: EntityDescriptor): THREE.PointLight[] {
+  addEntityLights(descriptor: EntityDescriptor): EntityLights {
     const lights: THREE.PointLight[] = [];
+    const panels: THREE.Mesh[] = [];
+    const ceilY = descriptor.kind === 'room'
+      ? (descriptor.ceilingHeight ?? this.config.hallwayHeight)
+      : this.config.hallwayHeight;
     for (const pos of fixturePositions(descriptor, this.config)) {
       const light = new THREE.PointLight(
         0xffffff,
@@ -127,21 +149,34 @@ export class BackroomsScene {
       );
       light.position.copy(pos);
       this.scene.add(light);
+
+      // Square light panel flush against the ceiling, centered on the same tile
+      // as the point light (pos.z/x are already snapped to tile centers).
+      const panel = makeCeilingPanel(pos.x, pos.z, ceilY - 0.02);
+      this.scene.add(panel);
+      panels.push(panel);
+
       this.fixtures.set(light, {
         base: this.config.fixtureLightIntensity,
         phase: fixturePhase(this.fixtures.size),
+        panel: panel.material as THREE.MeshStandardMaterial,
       });
       lights.push(light);
     }
     this.applyFlicker();
-    return lights;
+    return { lights, panels };
   }
 
   /** Remove the given fixture lights (created by addEntityLights). */
-  removeEntityLights(lights: THREE.PointLight[]): void {
-    for (const light of lights) {
+  removeEntityLights(entityLights: EntityLights): void {
+    for (const light of entityLights.lights) {
       this.scene.remove(light);
       this.fixtures.delete(light);
+    }
+    for (const panel of entityLights.panels) {
+      this.scene.remove(panel);
+      panel.geometry.dispose();
+      (panel.material as THREE.Material).dispose();
     }
   }
 
@@ -160,33 +195,40 @@ export class BackroomsScene {
 
   private applyFlicker(): void {
     for (const [light, fixture] of this.fixtures) {
-      light.intensity =
-        fixture.base * flickerMultiplier(this.config, fixture.phase, this.flickerTime);
+      const mult = flickerMultiplier(this.config, fixture.phase, this.flickerTime);
+      light.intensity = fixture.base * mult;
+      if (fixture.panel) fixture.panel.emissiveIntensity = PANEL_EMISSIVE * mult;
     }
   }
 }
 
-/** Grid of ceiling fixture positions covering an entity footprint. */
+/** Grid of ceiling fixture positions covering an entity footprint. Every
+ * position is snapped to a ceiling-tile center (the same grid the ceiling
+ * texture is centered on in geometry.ts) so each light sits dead-center in one
+ * tile. */
 function fixturePositions(
   descriptor: EntityDescriptor,
   config: EngineConfig,
 ): THREE.Vector3[] {
   const spacing = config.lightSpacing;
   const positions: THREE.Vector3[] = [];
+  const { ax, az } = ceilingAnchors(descriptor);
 
   if (descriptor.kind === 'hallway' && descriptor.axis && descriptor.start && descriptor.end) {
     const ceilY = config.hallwayHeight - LIGHT_DROP;
     if (descriptor.axis === 'x') {
       const x0 = Math.min(descriptor.start.x, descriptor.end.x);
       const x1 = Math.max(descriptor.start.x, descriptor.end.x);
-      for (let x = x0 + spacing / 2; x <= x1; x += spacing) {
-        positions.push(new THREE.Vector3(x, ceilY, descriptor.start.z));
+      // Snap the first fixture to a tile center; spacing is integer so every
+      // subsequent fixture (x += spacing) stays on a tile center too.
+      for (let x = snapToCeilingTile(x0 + spacing / 2, ax); x <= x1; x += spacing) {
+        positions.push(new THREE.Vector3(x, ceilY, az));
       }
     } else {
       const z0 = Math.min(descriptor.start.z, descriptor.end.z);
       const z1 = Math.max(descriptor.start.z, descriptor.end.z);
-      for (let z = z0 + spacing / 2; z <= z1; z += spacing) {
-        positions.push(new THREE.Vector3(descriptor.start.x, ceilY, z));
+      for (let z = snapToCeilingTile(z0 + spacing / 2, az); z <= z1; z += spacing) {
+        positions.push(new THREE.Vector3(ax, ceilY, z));
       }
     }
     return positions;
@@ -200,11 +242,30 @@ function fixturePositions(
       const x = descriptor.center.x - descriptor.width / 2 + ((i + 0.5) * descriptor.width) / cols;
       for (let j = 0; j < rows; j++) {
         const z = descriptor.center.z - descriptor.depth / 2 + ((j + 0.5) * descriptor.depth) / rows;
-        positions.push(new THREE.Vector3(x, ceilY, z));
+        positions.push(
+          new THREE.Vector3(snapToCeilingTile(x, ax), ceilY, snapToCeilingTile(z, az)),
+        );
       }
     }
     return positions;
   }
 
   return positions;
+}
+
+/** A bright square ceiling panel (recessed light) at (x, z), just below ceiling
+ * height y, sized to sit inside a single ceiling tile. */
+function makeCeilingPanel(x: number, z: number, y: number): THREE.Mesh {
+  const geometry = new THREE.PlaneGeometry(PANEL_SIZE, PANEL_SIZE);
+  const material = new THREE.MeshStandardMaterial({
+    color: 0xffffff,
+    emissive: 0xffffff,
+    emissiveIntensity: PANEL_EMISSIVE,
+    roughness: 0.9,
+    metalness: 0,
+  });
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.rotation.x = Math.PI / 2; // face down (-Y) toward the player
+  mesh.position.set(x, y, z);
+  return mesh;
 }

@@ -35,6 +35,13 @@ export interface BackroomsState {
   collisionEvents?: number;
   /** Raw last accepted click X (null before any click) — debug only. */
   lastClickedX?: number | null;
+  /** True once at least one click has ever been accepted (false = "never
+   * clicked" default mode). */
+  hasAcceptedClick?: boolean;
+  /** Acceptance result of the click submitted THIS step. */
+  clickAccepted?: boolean | null;
+  /** True if the wall-slide backstop engaged THIS step. */
+  slidThisStep?: boolean;
   /** Currently selected target doorway id (null when none). */
   targetDoorwayId?: string | null;
   /** Current steering target point (world space), or null when none. */

@@ -226,6 +226,69 @@ export const DATA_OUTPUT_ROOT = 'data';
 export const EPISODE_SEED: number | null = null;
 
 // ---------------------------------------------------------------------------
+// Clipping failsafe (Stage 2, Section 4.11) — headless agent episodes only
+// ---------------------------------------------------------------------------
+
+/** Seconds of lead-in trimmed before the crash frame when the failsafe fires. */
+export const CLIP_TRIM_SECONDS = 8;
+
+/** If fewer than this many frames remain after trimming, the whole episode dir
+ * is deleted (and the episode recorded in aborted.jsonl). */
+export const MIN_KEPT_FRAMES = 60;
+
+/** Warn + exit non-zero when the aborted share exceeds this (after 20 episodes). */
+export const CLIP_ALERT_SHARE = 0.05;
+
+/** Stop the batch early when the aborted share exceeds this (after 20 episodes). */
+export const CLIP_STOP_SHARE = 0.25;
+
+/** Consecutive slide-backstop frames that count as sustained contact (L2). */
+export const CLIP_L2_RUN_LENGTH = 10;
+
+// ---------------------------------------------------------------------------
+// Click-bot framework (Stage 2, Section 4.6)
+// ---------------------------------------------------------------------------
+
+/** Episode segment length range (frames at 20 Hz) between persona switches. */
+export const BOT_SEGMENT_LENGTH_MIN = 100;
+export const BOT_SEGMENT_LENGTH_MAX = 300;
+
+/** Decisive persona: human-like reaction delay range (frames) before clicking. */
+export const BOT_DECISIVE_DELAY_MIN = 4;
+export const BOT_DECISIVE_DELAY_MAX = 25;
+
+/** Late persona: long reaction delay range so the click lands when the door is
+ * close and reachability is marginal. */
+export const BOT_LATE_DELAY_MIN = 60;
+export const BOT_LATE_DELAY_MAX = 180;
+
+/** Click-jitter sigma range (normalized screen X) applied by door-aiming
+ * personas (decisive/late/dither). */
+export const BOT_JITTER_SIGMA_MIN = 0.03;
+export const BOT_JITTER_SIGMA_MAX = 0.10;
+
+/** Dither persona: frames before re-clicking toward a different door. */
+export const BOT_DITHER_RETHINK_MIN = 10;
+export const BOT_DITHER_RETHINK_MAX = 40;
+
+/** Spammer persona: burst size and inter-burst silence ranges (frames). */
+export const BOT_SPAMMER_BURST_MIN = 2;
+export const BOT_SPAMMER_BURST_MAX = 8;
+export const BOT_SPAMMER_SILENCE_MIN = 20;
+export const BOT_SPAMMER_SILENCE_MAX = 80;
+
+/** Uniform persona: click interval range (frames) — the old placeholder. */
+export const BOT_UNIFORM_INTERVAL_MIN = 20;
+export const BOT_UNIFORM_INTERVAL_MAX = 80;
+
+/** Named persona-mixture profiles (weights need not sum to 1). */
+export const MIXTURE_PROFILES = {
+  mixture: { idle: 10, decisive: 30, late: 10, dither: 10, prober: 15, spammer: 5, uniform: 20 },
+  uniformOnly: { uniform: 1 },
+  doorAwareOnly: { decisive: 3, late: 1, dither: 1 },
+} as const;
+
+// ---------------------------------------------------------------------------
 // Resolved config object
 // ---------------------------------------------------------------------------
 
@@ -292,6 +355,30 @@ export interface EngineConfig {
   episodeFrames: number;
   dataOutputRoot: string;
   episodeSeed: number | null;
+  // clipping failsafe
+  clipTrimSeconds: number;
+  minKeptFrames: number;
+  clipAlertShare: number;
+  clipStopShare: number;
+  clipL2RunLength: number;
+  // click-bot personas
+  botSegmentLengthMin: number;
+  botSegmentLengthMax: number;
+  botDecisiveDelayMin: number;
+  botDecisiveDelayMax: number;
+  botLateDelayMin: number;
+  botLateDelayMax: number;
+  botJitterSigmaMin: number;
+  botJitterSigmaMax: number;
+  botDitherRethinkMin: number;
+  botDitherRethinkMax: number;
+  botSpammerBurstMin: number;
+  botSpammerBurstMax: number;
+  botSpammerSilenceMin: number;
+  botSpammerSilenceMax: number;
+  botUniformIntervalMin: number;
+  botUniformIntervalMax: number;
+  mixtureProfiles: typeof MIXTURE_PROFILES;
 }
 
 export const CONFIG: Readonly<EngineConfig> = Object.freeze({
@@ -344,4 +431,26 @@ export const CONFIG: Readonly<EngineConfig> = Object.freeze({
   episodeFrames: EPISODE_FRAMES,
   dataOutputRoot: DATA_OUTPUT_ROOT,
   episodeSeed: EPISODE_SEED,
+  clipTrimSeconds: CLIP_TRIM_SECONDS,
+  minKeptFrames: MIN_KEPT_FRAMES,
+  clipAlertShare: CLIP_ALERT_SHARE,
+  clipStopShare: CLIP_STOP_SHARE,
+  clipL2RunLength: CLIP_L2_RUN_LENGTH,
+  botSegmentLengthMin: BOT_SEGMENT_LENGTH_MIN,
+  botSegmentLengthMax: BOT_SEGMENT_LENGTH_MAX,
+  botDecisiveDelayMin: BOT_DECISIVE_DELAY_MIN,
+  botDecisiveDelayMax: BOT_DECISIVE_DELAY_MAX,
+  botLateDelayMin: BOT_LATE_DELAY_MIN,
+  botLateDelayMax: BOT_LATE_DELAY_MAX,
+  botJitterSigmaMin: BOT_JITTER_SIGMA_MIN,
+  botJitterSigmaMax: BOT_JITTER_SIGMA_MAX,
+  botDitherRethinkMin: BOT_DITHER_RETHINK_MIN,
+  botDitherRethinkMax: BOT_DITHER_RETHINK_MAX,
+  botSpammerBurstMin: BOT_SPAMMER_BURST_MIN,
+  botSpammerBurstMax: BOT_SPAMMER_BURST_MAX,
+  botSpammerSilenceMin: BOT_SPAMMER_SILENCE_MIN,
+  botSpammerSilenceMax: BOT_SPAMMER_SILENCE_MAX,
+  botUniformIntervalMin: BOT_UNIFORM_INTERVAL_MIN,
+  botUniformIntervalMax: BOT_UNIFORM_INTERVAL_MAX,
+  mixtureProfiles: MIXTURE_PROFILES,
 });
