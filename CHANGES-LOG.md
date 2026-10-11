@@ -7,6 +7,48 @@ and `engine/docs/CONTRACTS.md`. This file replaces the old `handoff.md`.
 
 ---
 
+## 2026-10-11 — Stage 3: Python environment, dataset packager, training-data loader
+
+**Asked.** Build the first piece of the /neural half (brief
+`stage3-prompt-python-packager-loader.txt`): a reproducible PyTorch environment
+running real GPU work, a packager that turns the engine's episodes into compact
+memory-mapped training arrays at a chosen resolution, and a loader that serves
+training windows and rollout clips, plus one review image. No model training.
+
+**Built (all under `/neural`).** `packer.py` (parallel PNG→box-downsampled
+uint8-RGB arrays + structured labels + episode index + analysis sidecar;
+deterministic and incremental/idempotent); `dataset.py` (`PackedDataset` with
+`get_clip`/`window`, `WindowDataset` for training, ordered `iter_windows`,
+action-vector representation `[actionX, actionHasClicked]`); `review.py`
+(`windows.png` drawn through the loader); `gpu_check.py`; `requirements.txt` +
+`requirements.lock`; a 9-test pytest suite. `.gitignore` gained entries for the
+venv, packed data, and caches. Git, the engine, and the pilot data were **not**
+touched.
+
+**Environment.** Default Python 3.14.4 is already supported by PyTorch 2.14.1, so
+no user-space Python manager was needed. RTX 5070 (Blackwell `sm_120`) needs
+CUDA ≥ 12.8; driver is CUDA 13.0, so `torch==2.14.1+cu130` is the build.
+Verified with a real matmul + conv + backward (not just `is_available()`).
+
+**Key findings.**
+- Pilot packs to **149 episodes / 88,047 frames**: 145 complete + 4
+  aborted-but-truncated (the 5th aborted episode was deleted by the engine's
+  failsafe). `viewUnsafe` **357 frames (0.41%)**, `actionHasClicked=false`
+  **9.8%** — both match the Stage 2 report.
+- Loader throughput at 96×72, K=4: **~10,000 windows/s** single-process with the
+  split in RAM (`in_memory=True`), ~3,500/s memory-mapped. Windows are tiny, so
+  DataLoader worker IPC overhead dominates and `num_workers=0` is fastest; the
+  loader is not the bottleneck.
+
+**Verification.** `python -m pytest -q` — **9/9 pass**: action alignment
+(`actionX[j] == controlSignalX[j+1]`), validity rules + independent window count,
+pixel round trip vs an independent box downsample, totals (88,047 / 357),
+determinism (byte-identical double pack) + reuse (re-run skips all 149), and
+throughput + a 40-step GPU smoke train (loss 0.282 → 0.023). Full report at
+`neural/docs/STAGE3-REPORT.md`; consumer docs at `neural/README.md`.
+
+---
+
 ## 2026-10-11 — Stage 2 follow-up: `viewUnsafe` label (label-only) + pilot regeneration
 
 **Asked.** From Check-in 3: a read-only diagnosis had found frames where the

@@ -1,0 +1,20 @@
+# NeuralGameEngine /neural — pinned Python environment
+#
+# PyTorch must be the CUDA 12.8+ build (RTX 5070 = Blackwell sm_120 needs cu128 or
+# newer; this machine's driver is CUDA 13.0, so we use cu130). GPU wheels come from
+# the PyTorch wheel index, not PyPI. Install with:
+#
+#     python3 -m venv .venv
+#     .venv/bin/pip install --upgrade pip
+#     .venv/bin/pip install -r requirements.txt
+#
+# The exact resolved set (including transitive deps) is in requirements.lock
+# (`pip freeze` output), which is the reproducible lock.
+
+--extra-index-url https://download.pytorch.org/whl/cu130
+
+torch==2.14.1
+numpy==2.5.4
+pillow==12.3.0
+matplotlib==3.11.2
+pytest==9.1.1
