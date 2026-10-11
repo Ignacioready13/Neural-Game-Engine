@@ -7,6 +7,44 @@ and `engine/docs/CONTRACTS.md`. This file replaces the old `handoff.md`.
 
 ---
 
+## 2026-10-11 — Stage 4: baseline action-conditioned model and evaluation harness
+
+**Asked.** Train the first neural model on the pilot data and — more importantly —
+build the reusable evaluation harness every later model (including the diffusion
+model) will be judged with (brief `stage4-prompt-baseline-model-and-evaluation.txt`).
+
+**Built (all under `/neural`).** `model.py` (small residual U-Net, `predict(context,
+action) -> next_frame` interface, channel-concat and FiLM action injection);
+`train.py` (config-driven, seeded, checkpoints + loss curves) and
+`train_multistep.py` (autoregressive multi-step + turn-onset oversampling);
+`metrics.py` (L1/MSE/PSNR/SSIM + phase-correlation shift) and `eval_harness.py`
+(the long-lived harness: one-step metrics + action-relevant subset, true/zeroed/
+shuffled/shifted action ablation, rollouts vs persistence, action-following,
+counterfactual direction); `review_images.py` (the three review images);
+`bench.py` (params/FLOPs/precision/memory/latency/fps). Report in
+`neural/docs/STAGE4-REPORT.md`. `.gitignore` gained `/neural/runs/` and
+`/neural/review/`. Git, the engine and the pilot data were **not** touched; no
+Stage 3 code changed.
+
+**Key findings.**
+- The baseline beats persistence ~3× on one-step L1 (0.0064 vs 0.0197 at 64×48,
+  0.0066 vs 0.0204 at 96×72), PSNR 35 vs 25.5, and is far faster than 15 fps
+  (batch-1 ~1699 fps, rollout loop ~1143 fps; 2.13 GFLOPs/frame, 708k params).
+- **The model ignores the action.** The true/zeroed/shuffled/shifted ablation ties,
+  action-following is the same with and without the action, and the counterfactual
+  direction test is below chance. A four-step investigation showed this is a signal
+  problem, not a bug: at 20 Hz a click moves the next frame by ~0.03 px (measured by
+  phase correlation), accumulating only over ~10 frames, so a one-step pixel loss
+  gives no gradient to read the action. The conditioning *pathway* works (a synthetic
+  shift task learns to 0.04 L1); multi-step objectives, onset oversampling and
+  full backprop-through-time all failed to make the model action-responsive.
+- The counterfactual shows a rightward turn bias traced to the pilot's heading
+  imbalance (42.5% positive / 57.5% negative heading changes).
+- The learning curve is flat: 10% of the data already matches 100% (val L1 0.0122 vs
+  0.0121) — the one-step task is not data-limited.
+
+---
+
 ## 2026-10-11 — Stage 3: Python environment, dataset packager, training-data loader
 
 **Asked.** Build the first piece of the /neural half (brief

@@ -1,0 +1,16 @@
+{
+ "resolution": [
+  72,
+  96
+ ],
+ "n_params": 708323,
+ "flops_forward_batch1": 2130001920,
+ "precision": "bf16",
+ "peak_train_mem_mb": 1315.4,
+ "peak_inference_mem_mb": 43.6,
+ "inference_batch1_latency_ms": 0.589,
+ "inference_batch1_fps": 1698.9,
+ "rollout_loop_fps": 1143.3,
+ "fps_target": 15,
+ "rollout_fps_vs_target": 76.22
+}

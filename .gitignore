@@ -25,6 +25,8 @@ npm-debug.log*
 # Neural (Python): virtual environment, packed data, caches (never commit)
 /neural/.venv/
 /neural/data/
+/neural/runs/
+/neural/review/
 /neural/**/__pycache__/
 /neural/.pytest_cache/
 *.pyc

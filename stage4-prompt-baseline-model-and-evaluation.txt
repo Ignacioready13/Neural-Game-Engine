@@ -1,0 +1,276 @@
+PROJECT BRIEF — STAGE 4
+BASELINE ACTION-CONDITIONED NEXT-FRAME MODEL AND A REUSABLE EVALUATION HARNESS
+NeuralGameEngine (the /neural half of the monorepo)
+================================================================================
+
+--------------------------------------------------------------------------------
+0. ORIENTATION AND RULES OF ENGAGEMENT
+--------------------------------------------------------------------------------
+The engine (TypeScript, /engine) produced a pilot dataset; Stage 3 packaged it and
+built a loader in /neural. This stage trains the FIRST neural model on it, and,
+more importantly, builds the evaluation tools that every later model (including
+the eventual diffusion model) will be judged with.
+
+Read first, in this order:
+  - neural/README.md                      how the environment, packer and loader work
+  - neural/docs/STAGE3-REPORT.md          environment details, packed formats, dataset
+                                          statistics, loader throughput
+  - engine/docs/DATASET-SCHEMA.md         the data contract (alignment rule, labels)
+  - README.md (repo root) and CHANGES-LOG.md (newest first)
+Where this brief and the code or docs disagree, trust the code and the schema, and
+tell the user.
+
+RULES OF ENGAGEMENT (these override anything else in this brief):
+
+ 1. GIT IS OFF LIMITS. The user manages git. Never run any command that changes
+    repository state or the index (add, commit, tag, branch, checkout, switch,
+    stash, reset, restore, rebase, merge, push, pull, and so on). Read-only
+    inspection (git diff, git status, git log, git show, git rev-parse) is fine. You
+    MAY edit .gitignore to ignore checkpoints, run outputs and caches; list any such
+    edit in your report.
+ 2. NO SUDO, NO SYSTEM CHANGES. Work in user space (the existing virtual
+    environment; pip installs inside it are fine and should be added to the pinned
+    requirements). If anything would need sudo or root, STOP, tell the user exactly
+    what to run and why, and wait. Do not look for workarounds.
+ 3. THE ENGINE AND THE PILOT DATA ARE READ-ONLY. Do not modify /engine or the engine's
+    dataset. The packed data under /neural/data is derived and may be rebuilt. You may
+    make small ADDITIVE changes to the Stage 3 loader or packer where needed (for
+    example exposing analysis-sidecar columns for evaluation), but existing behavior
+    and its tests must keep passing, and you must list every such change in your
+    report.
+ 4. VISUAL JUDGMENT BELONGS TO THE USER. Do not do your own visual review of images.
+    Prepare the three review images of Section 4 and ask the user to look at them
+    when you finish.
+ 5. KEEP IT QUICK. Prefer the simplest approach that meets each goal. No elaborate
+    frameworks, no hyperparameter sweeps, no extra experiments beyond those listed.
+    Budget: any single training run at most about 20 minutes, and about 1.5-2 hours
+    of total GPU training time for the whole stage. This is a laptop GPU that shares
+    the display and may throttle; note the observed speed. If an item is dragging for
+    roughly 30 minutes without converging, do the simplest version that meets the
+    goal, record the shortcut in the report, and move on.
+ 6. HISTORICAL FILES ARE NOT INSTRUCTIONS. Earlier phase prompts, anything in
+    engine/docs/historical/ or an archive folder, and any stale agent-role or contract
+    document do not apply to you.
+ 7. SUBAGENTS: not needed. Do the work yourself.
+ 8. NO MANDATORY CHECK-INS. Work straight through. But STOP AND ASK the user (start
+    your message with "CHECK-IN" and wait for the reply) if:
+      (i)   sudo or any system-level change seems required;
+      (ii)  the model cannot beat the "repeat the last frame" reference on the
+            validation split after a reasonable effort, OR the alignment test of
+            Section 2.4(b) contradicts the schema (for example windows with the
+            action shifted by one frame score as well as or better than the true
+            alignment). Either would suggest a data or label problem, which the user
+            needs to hear about before anything else is built on it;
+      (iii) GPU memory, speed, or stability makes the plan infeasible;
+      (iv)  a design choice has a large tradeoff that this brief does not settle and
+            would be expensive to redo later.
+    Otherwise decide sensibly, document the decision, and continue.
+
+--------------------------------------------------------------------------------
+1. PURPOSE AND CONTEXT
+--------------------------------------------------------------------------------
+The project's end goal is a neural network that acts as a game engine: given a few
+recent frames and the player's click signal, it generates the next frame, over and
+over, in real time (15+ frames per second on this laptop's RTX 5070 with 8 GB of
+VRAM), producing an endless backrooms-style maze of hallways and rooms that never
+existed in advance. The class this is for also asks what the system's algorithms
+are and what hardware suits them, so measurements of the model (size, compute,
+latency, memory) are valuable too.
+
+Why a baseline first. The likely final model is an action-conditioned diffusion
+model. That is a lot of machinery. Before building it we want to know, cheaply:
+  (a) that the data, labels, loader and training loop are correct end to end;
+  (b) that the action signal really carries information the model can use, and that
+      the alignment rule (action[i] drives frame i to frame i+1) is right in
+      practice and not just on paper;
+  (c) what a simple, deterministic next-frame predictor can and cannot do. The
+      expected failure is that, when something new is revealed (a room beyond a
+      doorway, the content of an unseen corridor), a model trained to minimize pixel
+      error predicts a blurry average, because the true next frame is one of many
+      possibilities. That blur is precisely the argument for a generative (diffusion)
+      model, and we want it documented with evidence;
+  (d) the evaluation tools we will keep using.
+This stage is NOT trying to produce a good-looking generator.
+
+Data facts you need (details are in the Stage 3 report):
+  - Pilot: about 88,000 frames; train 119 episodes (about 70,600 frames), val 15,
+    test 15. 20 Hz. Packed at 96x72 and 64x48. Frames within one episode are highly
+    redundant (consecutive frames are nearly identical).
+  - Each action is a float vector [actionX, actionHasClicked]; actionX in [-1, 1] is
+    the held click position (a horizontal screen position, resolved by the engine to
+    the nearest reachable door), 0 with hasClicked = 0 before the first click.
+  - The loader already drops windows containing viewUnsafe frames by default; keep
+    that default for training and evaluation.
+  - The analysis sidecar carries ground-truth quantities that are NOT model inputs but
+    are useful for evaluation: player pose and heading, angular velocity, which doors
+    were visible and reachable with their screen positions, the persona, and so on.
+  - Most frames are steady forward walking; the action matters mainly around turns and
+    choices, so overall averages can hide whether the model uses the action.
+
+--------------------------------------------------------------------------------
+2. WHAT TO BUILD
+--------------------------------------------------------------------------------
+
+2.1 The baseline model
+  A small, deterministic, action-conditioned next-frame predictor: K context frames
+  plus the K corresponding actions in, one predicted next frame out, trained with a
+  plain pixel loss. Architecture, K (start around 4), loss details, and how the
+  action is injected are your decisions; document them. Guidance rather than orders:
+    - Keep it small. This is a baseline and also the starting point for a real-time
+      budget; it should be able to run far faster than 15 frames per second.
+    - The action is a horizontal screen position whose effect depends on where doors
+      are in the image, so the way it is injected may matter (for example conditioning
+      at more than one scale, or as extra image-shaped input). Try the simplest option
+      first. If the action ablation of 2.4 shows the model ignores the action, try
+      ONE alternative conditioning scheme before concluding anything.
+    - Predicting the change from the last context frame (a residual) rather than the
+      whole frame is a common, useful choice when consecutive frames are so similar.
+    - Mixed precision is fine. Do not rely on torch.compile; use it only if it works
+      without effort.
+
+2.2 Training setup
+  Develop and iterate at 64x48 (fast), then run the same recipe once at 96x72 and
+  report both. Select the checkpoint and any settings on the validation split only;
+  touch the test split once, at the end, for the final reported numbers. Seed
+  everything, save the configuration and results of each run, save checkpoints and
+  loss curves under a gitignored location, and keep the code able to train from a
+  config so later models can reuse it. Report the train/validation gap (the pilot is
+  small, so overfitting is possible).
+
+2.3 Reference predictors
+  Evaluate, on the same windows as the model: (a) "persistence" (repeat the last
+  context frame), which is the number to beat; and (b) optionally a cheap
+  constant-motion extrapolation if you can build one quickly. A model that cannot beat
+  persistence has not learned anything useful.
+
+2.4 The evaluation harness (the long-lived part)
+  Build it so it can evaluate ANY future model that has the same interface (context
+  frames and actions in, next frame out, plus an autoregressive rollout driver).
+  (a) One-step (teacher-forced) metrics on val/test windows: simple, standard pixel
+      metrics (for example L1 or MSE, PSNR, SSIM; implement lightweight versions
+      rather than adding heavy dependencies), reported overall AND on an
+      "action-relevant" subset that you define from the sidecar (for example windows
+      where the true heading changes noticeably in the target step, or where the action
+      changed in the last few frames). Document the definition and the subset size.
+  (b) Alignment and action-use ablation, WITHOUT retraining: evaluate the trained
+      model on the same windows with (i) the true actions, (ii) actions zeroed,
+      (iii) actions shuffled across windows, and (iv) actions shifted by one frame
+      earlier and by one frame later. If the schema's alignment rule is right in
+      practice and the model uses the action, the true alignment should score best,
+      especially on the action-relevant subset. Report the numbers. This is an
+      empirical test of the Stage 2 off-by-one fix; the outcome matters (see check-in
+      trigger (ii)).
+  (c) Rollouts: starting from real context, generate N steps (try about 40) feeding the
+      model its own predictions while supplying the TRUE action sequence from the clip.
+      Report error versus horizon for the model and for persistence, on a sample of val
+      clips (for example 30 to 50), and note when the model stops being better than
+      persistence.
+  (d) Action-following. We want a measurable answer to "does clicking toward a door
+      turn the view toward it?" Design a simple quantitative metric, for example:
+      estimate the horizontal image shift between successive frames (a basic
+      shift-search or phase-correlation estimate is enough), and compare the shift the
+      model's predicted frames show against the shift in the real frames (and against
+      the sidecar's ground-truth heading change). Report the agreement for the model,
+      for persistence, and for the zeroed-action ablation.
+  (e) Counterfactual direction test. Take val contexts in which at least two doors are
+      reachable on opposite sides of screen center (from the sidecar's candidates). Roll
+      the model forward a short distance (about 10 to 20 steps), holding as the action
+      the screen position of one door, then of the other, then no click. Report the share
+      of contexts where the predicted view turns toward the door that was clicked (the
+      scene content moves the opposite way in the image). Because the engine is
+      deterministic and path-dependent we cannot get ground-truth counterfactuals from
+      the pilot itself, so this tests direction, not exact pixels.
+
+2.5 Learning curve (do this if each run is cheap enough; otherwise do two points)
+  Train with 10%, 30% and 100% of the training windows (same recipe, fixed time or step
+  budget per run, documented) and report validation metrics against data size. If a run
+  is too slow, use only the 30% and 100% points. This tells the user how much bulk data
+  to generate, so state what the curve suggests (still improving steeply, or flattening).
+
+2.6 Speed and resource measurements (for the project's hardware discussion)
+  Report: parameter count; approximate multiply-adds (or FLOPs) per generated frame;
+  numeric precision used; peak GPU memory in training and in inference; and inference
+  speed on this GPU at batch size 1 (frames per second for one frame at a time, which
+  is what real-time play needs) and for the autoregressive rollout loop including any
+  overhead. Say how close this is to the 15 fps target and what that implies for a
+  model that needs several denoising steps per frame.
+
+--------------------------------------------------------------------------------
+3. WHAT TO EXPECT AND WHAT TO LOOK OUT FOR
+--------------------------------------------------------------------------------
+  - Steady forward motion is easy; turns, doorway reveals and new rooms are hard. A
+    good baseline will beat persistence mainly on the first.
+  - Blurry predictions where new content appears are expected and are a finding, not
+    a bug. Report where the blur shows up.
+  - Rollouts will degrade as errors compound; the point is to measure how fast and in
+    what way (blurring, geometry melting, color drift), not to fix it here.
+  - Do not "fix" poor results by changing the labels or the data. If the numbers look
+    wrong, trigger a check-in.
+  - Overall metrics can look good while the model ignores the action. That is why
+    2.4(b), (d) and (e) exist.
+
+--------------------------------------------------------------------------------
+4. REVIEW IMAGES (for the user)
+--------------------------------------------------------------------------------
+Produce exactly three images in a gitignored review folder, using the best model at
+96x72 (or the better of the two resolutions) and saying which:
+  1. predictions.png: about 8 val windows (include several where a turn is happening and
+     a few steady-forward ones). For each: the last two or three context frames, the
+     ground-truth next frame, the model's prediction, and the persistence prediction,
+     with the action values printed.
+  2. rollouts.png: about 3 val clips, each a row of ground-truth frames above a row of the
+     model's autoregressive frames (every 4th step for about 40 steps), using the true
+     actions.
+  3. counterfactual.png: about 3 contexts with doors on both sides, showing the same
+     context rolled forward under "click the left door", "click the right door", and "no
+     click", at a few time steps, with the action printed.
+When you finish, tell the user the paths and what to look for: (1) the prediction should
+resemble the true next frame, blurrier but not nonsense, and visibly closer than
+persistence during turns; (2) rollouts should stay recognizable for a while and then
+degrade, and the user should note how; (3) the left-click and right-click rows should
+visibly turn in different directions. Keep the images small enough to view comfortably
+(enlarge with nearest-neighbor).
+
+--------------------------------------------------------------------------------
+5. ACCEPTANCE CHECKS (this is the whole list; do not add to it)
+--------------------------------------------------------------------------------
+ 1. Sanity overfit: the model drives its loss near zero on a tiny subset (for example a
+    few dozen windows) within a couple of minutes, proving the model, loss and training
+    loop can learn.
+ 2. Beats the reference: on the val split, the trained model beats persistence overall;
+    report the numbers for both resolutions.
+ 3. Alignment/action ablation (2.4(b)): report true vs zeroed vs shuffled vs shifted
+    actions, overall and on the action-relevant subset.
+ 4. Rollout error versus horizon (2.4(c)) for the model and persistence.
+ 5. Action-following and counterfactual-direction results (2.4(d), (e)).
+ 6. Speed and resource numbers (2.6).
+ 7. Test split evaluated once at the end with the final model; report it.
+ 8. The existing tests from Stage 3 still pass; add a few small tests for the new
+    evaluation code (for example the metric functions and the action-shift
+    transformations) but do not write an exhaustive suite.
+Everything visual is judged by the user. Not requested, so do not do them: sweeps over
+many hyperparameters, other model families, diffusion or generative models, a
+real-time client, bulk data generation, anything in /engine.
+
+--------------------------------------------------------------------------------
+6. DELIVERABLES AND DEFINITION OF DONE
+--------------------------------------------------------------------------------
+  [ ] The baseline model code and training script, configurable, with saved best
+      checkpoints for 64x48 and 96x72
+  [ ] The evaluation harness (2.4) runnable on any model with the same interface,
+      documented in neural/README.md (updated, written for a reader who has not seen this
+      conversation)
+  [ ] The three review images
+  [ ] A report at neural/docs/STAGE4-REPORT.md, written so that a student new to this
+      can follow it and reuse it in a class write-up. It should contain: a plain-language
+      description of the model and how it works; the training setup; a results table for
+      every acceptance check; the ablation and action-following results; the learning
+      curve and what it suggests about how much data to generate; the speed/resource
+      numbers; a clear list of the failure modes observed with evidence; what this
+      suggests for the diffusion stage (what a generative model must fix); shortcuts
+      taken; changes made to Stage 3 code; any .gitignore edits; and a "needs user
+      decision" list
+  [ ] A short entry at the top of CHANGES-LOG.md in the existing format
+  [ ] You have not touched git, the engine, or the pilot data
+Then stop and tell the user where the images are and what to look for. The user will read
+the Stage 4 report and neural/README.md to plan the next stage.

@@ -6,16 +6,34 @@ compact, fast-to-read training arrays and serves training windows to a model. It
 is fully independent of `/engine`; it only *reads* the engine's dataset and never
 calls back into it.
 
-No model is trained here yet (that is the next stage). What exists:
+Stage 4 adds the first model and the reusable evaluation harness. What exists:
 
 - `packer.py` — packs a source dataset into memory-mapped arrays at a chosen
   resolution.
 - `dataset.py` — the loader: `PackedDataset` (random access / clips) and
   `WindowDataset` (training windows), plus the action-alignment contract.
-- `review.py` — renders `windows.png`, the one review image for human judgment.
+- `model.py` — the baseline action-conditioned next-frame predictor (a small
+  residual U-Net) and the `predict(context, action) -> next_frame` interface
+  every future model must implement.
+- `train.py` — config-driven training (seeded, checkpoints + loss curves).
+- `train_multistep.py` — autoregressive multi-step training with turn-onset
+  oversampling (used in the "why action conditioning is hard" investigation).
+- `onset_effect.py` — quantifies the action's true effect on the next frame in
+  pixels (investigation Step 0).
+- `pathway_sanity.py` — synthetic shift task proving the action-conditioning
+  pathway can learn (investigation Step 1).
+- `onset_ablation.py` — horizon action-use ablation at turn onsets (investigation
+  Step 3).
+- `metrics.py` — L1 / MSE / PSNR / SSIM and the phase-correlation image-shift
+  estimator.
+- `analysis.py` — read-only access to the packed analysis sidecar (heading, pose,
+  doorway candidates), keyed onto global frame indices for evaluation.
+- `eval_harness.py` — the long-lived evaluation harness (see §9).
+- `review_images.py` — renders the three Stage 4 review images (see §10).
+- `bench.py` — model size / FLOPs / memory / latency measurements (see §11).
+- `review.py` — renders `windows.png`, the one Stage 3 review image.
 - `gpu_check.py` — records versions and proves PyTorch runs real GPU work.
-- `tests/` — the Stage 3 verification suite (alignment, rules, round trip,
-  totals, determinism/reuse, throughput + smoke).
+- `tests/` — the verification suite (Stage 3 loader + Stage 4 metrics/harness).
 
 The packed data lives in `data/` (gitignored) and is **derived and rebuildable**:
 the PNG masters under `engine/data/` remain the source of truth.
@@ -194,6 +212,114 @@ judgment; see the Stage 3 report for what to look for.
 ## 6. Run the checks
 
 ```bash
-.venv/bin/python -m pytest -q          # 9 tests: alignment, rules, round trip,
-                                       # totals, determinism/reuse, throughput+smoke, environment
+.venv/bin/python -m pytest -q          # loader suite (alignment, rules, round trip,
+                                       # totals, determinism/reuse, throughput+smoke,
+                                       # environment) + Stage 4 metrics/harness tests
 ```
+
+## 7. The baseline model
+
+`model.py` defines the Stage 4 baseline and the **interface every future model
+must implement** (the evaluation harness only knows this):
+
+```python
+predict(context, action) -> next_frame
+#   context : [B, K, 3, H, W] float in [-1, 1]   (K context frames)
+#   action  : [B, K, 2] float  [actionX, actionHasClicked]
+#   next    : [B, 3, H, W] float in [-1, 1]
+```
+
+The baseline is a small **residual U-Net**: K=4 context frames + their 4 actions
+in, one predicted next frame out. It predicts the *change* from the last context
+frame (a residual) rather than the whole frame, and adds it back in float32 so
+mixed precision never loses the base frame. The action is injected the simplest
+way: each frame's 2-dim action is broadcast as two constant image channels
+concatenated to its RGB channels, so the network sees `K * (3 + 2) = 20` input
+channels. Two-level encoder-decoder (widths 32/64/128), GroupNorm, nearest-upsample
++ conv in the decoder. ~708k parameters.
+
+`PersistenceModel` (repeat the last context frame, ignore the action) is the
+reference every model must beat; the harness evaluates it on the same windows.
+
+**Known result (Stage 4):** the baseline beats persistence ~3× on one-step L1 but
+does **not** use the action — the true/zeroed/shuffled/shifted ablation ties, and
+the counterfactual direction test fails. The cause is the action's tiny per-step
+effect at 20 Hz (~0.03 px, accumulating only over ~10 frames), documented in
+`docs/STAGE4-REPORT.md` §7 along with what was tried. Any future model should be
+judged with the horizon ablation and counterfactual metrics, not one-step pixel
+error alone.
+
+## 8. Training
+
+```bash
+# iterate at 64x48 (fast), then run once at 96x72
+.venv/bin/python train.py --name baseline_64 --packed data/pilot_v1_64x48 \
+    --max-steps 6000 --batch 64 --val-every 250 --seed 0
+.venv/bin/python train.py --name baseline_96 --packed data/pilot_v1_96x72 \
+    --max-steps 6000 --batch 64 --val-every 250 --seed 0
+```
+
+`train.py` is config-driven (every knob is a key; CLI flags override). Everything
+lands in `runs/<name>/` (gitignored): `config.json` (full config + window/param
+counts), `best.pt` / `last.pt`, `train_log.json` (step/train/val losses — the
+loss curve), `result.json` (one-line summary incl. throughput). Key knobs:
+
+- `--limit N` — train on only the first N windows (the **sanity overfit** check).
+- `--train-fraction F` — train on a seeded random F fraction of windows
+  (the **learning curve**).
+- `--mixed-preprocessing bf16` (default) uses bf16 autocast on the GPU.
+
+Training uses `require_safe=True` windows (drops `viewUnsafe`), L1 loss, Adam
+lr 1e-3, seed 0.
+
+## 9. The evaluation harness
+
+`eval_harness.py` evaluates **any** model with the `predict(context, action)`
+interface (plus a built-in autoregressive rollout driver). It runs the five parts
+of Stage 4 §2.4 and writes one JSON:
+
+```bash
+.venv/bin/python eval_harness.py --packed data/pilot_v1_64x48 \
+    --checkpoint runs/baseline_64/best.pt --split val --out eval_out/baseline_64_val.json
+```
+
+- **(a) one-step metrics** — L1 / MSE / PSNR / SSIM, overall **and** on an
+  "action-relevant" subset (windows whose target-step heading change is ≥ 0.5°,
+  i.e. a turn is happening).
+- **(b) action-use ablation, no retraining** — the same windows scored with the
+  true actions, zeroed actions, shuffled actions, and actions shifted one frame
+  earlier / later. True alignment should score best if the off-by-one rule is
+  right and the model uses the action.
+- **(c) rollouts** — autoregressive ~40-step rollouts from real context with the
+  true actions; error vs horizon for the model and persistence.
+- **(d) action-following** — phase-correlation horizontal image shift between
+  predicted consecutive frames vs the real frames' shift and the sidecar heading.
+- **(e) counterfactual direction** — contexts with reachable doors on both sides,
+  rolled under "click left / right / none"; measures whether the view turns the
+  expected way.
+
+Evaluate the test split **once**, at the end, with the final model.
+
+## 10. The review images
+
+```bash
+.venv/bin/python review_images.py --packed data/pilot_v1_96x72 \
+    --checkpoint runs/baseline_96/best.pt --out-dir review/
+```
+
+Produces three images (drawn **through the loader + model**, never by reading
+PNGs): `predictions.png` (~8 val windows, context + GT + model + persistence, action
+values printed), `rollouts.png` (~3 val clips, GT above the model's autoregressive
+frames every 4th step for ~40 steps), `counterfactual.png` (~3 contexts, left/right/
+no-click at a few time steps). Visual judgment is yours; see the Stage 4 report.
+
+## 11. Speed and resource
+
+```bash
+.venv/bin/python bench.py --packed data/pilot_v1_96x72 \
+    --checkpoint runs/baseline_96/best.pt --out eval_out/baseline_96_profile.json
+```
+
+Reports parameter count, forward FLOPs (batch 1), precision, peak GPU memory for a
+training step and for batch-1 inference, batch-1 inference latency/fps, and
+autoregressive rollout-loop fps vs the 15 fps target.
