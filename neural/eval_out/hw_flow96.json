@@ -1,0 +1,61 @@
+{
+ "resolution": [
+  96,
+  72
+ ],
+ "checkpoint": "runs/flow96/best.pt",
+ "n_params": {
+  "readout+core": 514791,
+  "denoiser": 766243,
+  "total": 1281034,
+  "trainable": 766243
+ },
+ "precision": "float32 (training uses bf16 autocast)",
+ "sampling_steps": 4,
+ "macs_per_frame": {
+  "readout": 422050176,
+  "denoiser_per_step": 1041173888,
+  "denoiser_total": 4164695552,
+  "warp": 82944,
+  "total": 4586828672,
+  "share_readout": 0.09201350348583502,
+  "share_denoiser": 0.907968413431946,
+  "share_warp": 1.8083082218947114e-05,
+  "dense_fraction": 1.0
+ },
+ "latency_ms": {
+  "readout": 0.3749521600548178,
+  "warp": 0.09261998005968053,
+  "denoiser_per_step": 0.529420639941236,
+  "denoiser_total": 2.117682559764944,
+  "decode": 0.03609405997849535,
+  "sum_of_parts": 2.6213487598579377,
+  "note": "compare with the measured end-to-end loop in the G4 gate (14.7 ms mean per frame incl. click features and the rollout bookkeeping)"
+ },
+ "activation_sparsity": {
+  "readout": {
+   "exact_zero": 0.5894318181818182,
+   "near_zero": 0.5899780475206612,
+   "n": 774400
+  },
+  "denoiser": {
+   "exact_zero": 0.473853545357429,
+   "near_zero": 0.47437655790973027,
+   "n": 1437824
+  }
+ },
+ "frame_to_frame_sparsity": {
+  "real": {
+   "2": 0.4418402777777778,
+   "10": 0.11210575810185186,
+   "30": 0.04248046875
+  },
+  "generated": {
+   "2": 0.8633716724537037,
+   "10": 0.27168330439814814,
+   "30": 0.04481336805555556
+  },
+  "definition": "share of pixels whose max channel change exceeds the threshold (0-255)",
+  "real_mean_abs_change": 0.003877269569784403
+ }
+}

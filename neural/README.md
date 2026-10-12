@@ -351,3 +351,100 @@ no-click at a few time steps). Visual judgment is yours; see the Stage 4 report.
 Reports parameter count, forward FLOPs (batch 1), precision, peak GPU memory for a
 training step and for batch-1 inference, batch-1 inference latency/fps, and
 autoregressive rollout-loop fps vs the 15 fps target.
+
+---
+
+## 12. Stage 5 — the real generator (steering core + stochastic generator + gates + player)
+
+Stage 4 ended with a precise diagnosis: the direction of a click *is* readable from
+the frames and the click history, but a pixel-residual decoder cannot render the
+resulting few-pixel global view shift, while a differentiable **warp** can. Stage 5
+turns that into a generator.
+
+### What the pieces are
+
+- `shift_table.py` — precomputes the per-step horizontal image shift for a packed set
+  (phase correlation, vectorized per episode) and a **denoised** target table derived
+  from the sidecar `playerHeading` (`dshift = scale · dheading`, `scale ≈ −35 px/rad`
+  at 64×48). Both are training-only. Caches live in `data/_cache/` so the packed
+  datasets stay untouched.
+- `steer.py` — the steering core: click features (`actionX`, `actionHasClicked`,
+  `deltaActionX`, frames-since-click), the differentiable `warp_translate`, the
+  `DirectionReadout` (per-step shift increments for the next H steps, with Gaussian
+  *click-column* channels so the encoder can compare the click position against the
+  door layout), and `SteeringModel` = readout → warp → small gated low-resolution
+  residual.
+- `train_steer.py` — trains the core with three ingredients that matter: a denoised
+  heading-derived target, **DAgger roll-ins** (roll the model forward k steps and
+  supervise on its own frames — without it the closed loop is bistable), and
+  **counterfactual clicks** (swap in the other door's click with a target from the
+  fitted engine-rule geometry — without it the readout reads the direction off the
+  frames and ignores the click).
+- `flow.py` — the stochastic generator: conditional rectified flow on the **residual
+  relative to the motion-warped last frame** (`next = warped + r̂`), 4 sampling steps.
+  Keeping the warp outside the learned residual makes steering structural.
+- `train_flow.py` — trains the generator on top of a frozen steering checkpoint, with
+  turn-onset oversampling, mirror augmentation and noise-augmented context frames.
+- `gates.py` — the one-command gate runner (G1–G4) and the Stage 5 metrics.
+- `play.py` — the minimal interactive player (pygame) plus a headless scripted mode.
+- `review_stage5.py` — the review images for §6 (rollouts, counterfactual, reveals,
+  long runs).
+
+### Run it
+
+```bash
+# 1. shift tables (once per packed set; a couple of minutes, CPU only)
+./memcap.sh --mem 12G -- .venv/bin/python shift_table.py --packed data/bulk_v1_64x48
+
+# 2. steering core (Milestone 1)
+./memcap.sh --mem 14G -- .venv/bin/python train_steer.py --name steer64 \
+    --packed data/bulk_v1_64x48 --max-steps 14000 --batch 64
+
+# 3. generator (Milestone 2), on top of the core
+./memcap.sh --mem 14G -- .venv/bin/python train_flow.py --name flow64 \
+    --packed data/bulk_v1_64x48 --core runs/steer64/best.pt --max-steps 8000
+
+# 4. gates (val; the test split is touched once, in Milestone 4)
+./memcap.sh --mem 14G -- .venv/bin/python gates.py --gates g1 \
+    --packed data/bulk_v1_64x48 --checkpoint runs/steer64/best.pt \
+    --out eval_out/g1_steer64.json
+./memcap.sh --mem 14G -- .venv/bin/python gates.py --gates g2 \
+    --packed data/bulk_v1_64x48 --checkpoint runs/flow64/best.pt \
+    --baseline runs/baseline_64/best.pt --seeds 0,1,2 --out eval_out/g2_flow64.json
+./memcap.sh --mem 14G -- .venv/bin/python gates.py --gates g3 \
+    --packed data/bulk_v1_96x72 --checkpoint runs/flow96/best.pt --steps 300
+./memcap.sh --mem 12G -- .venv/bin/python gates.py --gates g4 \
+    --packed data/bulk_v1_96x72 --checkpoint runs/flow96/best.pt
+
+# 5. review images and the player
+./memcap.sh --mem 12G -- .venv/bin/python review_stage5.py \
+    --packed data/bulk_v1_96x72 --checkpoint runs/flow96/best.pt \
+    --out-dir review/stage5 --which all
+./memcap.sh --mem 12G -- .venv/bin/python play.py \
+    --checkpoint runs/flow96/best.pt --packed data/bulk_v1_96x72
+```
+
+### The model interface
+
+Every Stage 5 model keeps the Stage 4 call and adds two optional arguments:
+
+```python
+predict(context, action=None, features=None, seed=None, return_shift=False)
+#   context  [B,K,3,H,W] float in [-1,1]
+#   action   [B,K,2]     [actionX, actionHasClicked]         (click signals)
+#   features [B,K,4]     click features (derived from `action` if omitted)
+#   seed     int|None    stochastic sampling seed (generators)
+#   returns  next frame [B,3,H,W] in [-1,1], or (frame, info) if return_shift
+```
+
+`eval_harness.model_predict` dispatches on the signature, so Stage 4 checkpoints stay
+evaluable, and `eval_harness.rollout_v2` is the feature-aware, seed-aware closed-loop
+driver used by the gates and the player.
+
+### No-oracle (N1/N2)
+
+At inference the models accept only frames, click-derived signals and a seed.
+`tests/test_stage5.py::test_rollout_driver_never_reads_the_sidecar` asserts the
+closed-loop driver works with the analysis sidecar unavailable, and
+`test_inference_models_accept_only_frames_and_clicks` pins the signatures. The sidecar
+(heading, doorway candidates) is used **only** while building training targets.

@@ -135,3 +135,107 @@ def estimate_shift_x(prev_rgb: np.ndarray, next_rgb: np.ndarray) -> float:
         next_ = next_.mean(axis=-1)
     dx, _ = estimate_shift(prev, next_)
     return dx
+
+
+# --------------------------------------------------------------------------- #
+# Stage 5 additive metrics: sharpness, colour, stability, diversity
+# --------------------------------------------------------------------------- #
+
+def _as_nchw(x) -> torch.Tensor:
+    """Any frame(s) -> [N, C, H, W] float in the loader's [-1, 1] range.
+
+    Accepts the diffusion convention (float tensors/arrays in [-1, 1], the loader's
+    ``normalize=True`` output) and raw ``uint8`` frames in [0, 255] (what the packed
+    arrays and the rollout driver produce in their display form). Mixing the two
+    silently would make every "in [0,1] units" metric meaningless, so the dtype is
+    used to decide: integer/uint8 input is rescaled from [0, 255].
+    """
+    if isinstance(x, torch.Tensor):
+        raw_u8 = x.dtype == torch.uint8
+        t = x.float()
+    else:
+        a = np.asarray(x)
+        raw_u8 = a.dtype == np.uint8
+        # torch.tensor copies, so a read-only memmap slice is safe to consume
+        t = torch.tensor(np.ascontiguousarray(a), dtype=torch.float32)
+    if raw_u8:
+        t = t / 127.5 - 1.0
+    if t.ndim == 3:
+        t = t[None]
+    if t.shape[1] not in (1, 3) and t.shape[-1] in (1, 3):
+        t = t.permute(0, 3, 1, 2)
+    return t
+
+
+def sharpness(x) -> float:
+    """Mean gradient magnitude in [0, 1] units (higher = sharper).
+
+    A blurry average has a low mean gradient; a crisp frame has a high one. Also
+    ``baseline_sharpness`` helper below: same thing, so units are directly
+    comparable between real, generated and Stage 4 frames.
+    """
+    t = to01(_as_nchw(x))
+    gx = (t[:, :, :, 1:] - t[:, :, :, :-1]).abs().mean()
+    gy = (t[:, :, 1:, :] - t[:, :, :-1, :]).abs().mean()
+    return float(0.5 * (gx + gy).item())
+
+
+def laplacian_var(x) -> float:
+    """Variance of the 4-neighbour Laplacian on the luminance, in [0, 1]^2 units."""
+    t = to01(_as_nchw(x))
+    lum = t.mean(dim=1, keepdim=True)
+    k = torch.tensor([[0.0, 1.0, 0.0], [1.0, -4.0, 1.0], [0.0, 1.0, 0.0]],
+                     device=t.device).view(1, 1, 3, 3)
+    lap = F.conv2d(lum, k, padding=1)
+    return float(lap.var().item())
+
+
+def color_stats(x) -> dict:
+    """Per-channel mean and std in [0, 1] units."""
+    t = to01(_as_nchw(x))
+    means = t.mean(dim=(0, 2, 3))
+    stds = t.std(dim=(0, 2, 3))
+    return {
+        "mean_rgb": [float(v) for v in means.tolist()],
+        "std_rgb": [float(v) for v in stds.tolist()],
+        "mean_all": float(t.mean().item()),
+    }
+
+
+def frame_change(a, b) -> float:
+    """Mean absolute difference between two frames (or frame stacks) in [0, 1]."""
+    ta, tb = to01(_as_nchw(a)), to01(_as_nchw(b))
+    return float((ta - tb).abs().mean().item())
+
+
+def black_frac(x, thr: float = 0.02) -> float:
+    """Share of pixels whose luminance is below ``thr`` (collapse-to-black check)."""
+    t = to01(_as_nchw(x)).mean(dim=1)
+    return float((t < thr).float().mean().item())
+
+
+def saturated_frac(x, thr: float = 0.98) -> float:
+    """Share of pixels whose luminance is above ``thr`` (collapse-to-white check)."""
+    t = to01(_as_nchw(x)).mean(dim=1)
+    return float((t > thr).float().mean().item())
+
+
+def seed_diversity(samples) -> float:
+    """Mean pairwise L1 between samples of the same context, in [0, 1] units.
+
+    ``samples`` is a list/array of frames (each [3,H,W] or [N,3,H,W] on the same
+    grid). Larger = the generator produced visibly different content.
+    """
+    ts = [to01(_as_nchw(s)) for s in samples]
+    if len(ts) < 2:
+        return 0.0
+    vals = []
+    for i in range(len(ts)):
+        for j in range(i + 1, len(ts)):
+            vals.append(float((ts[i] - ts[j]).abs().mean().item()))
+    return float(np.mean(vals))
+
+
+def _crop_border(x, border: int = 4) -> torch.Tensor:
+    t = _as_nchw(x)
+    return t[:, :, border:-border, border:-border]

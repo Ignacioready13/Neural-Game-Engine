@@ -383,6 +383,125 @@ def counterfactual_eval(packed, model, split, K, sidecar, steps=15, max_contexts
 
 
 # --------------------------------------------------------------------------- #
+# Stage 5 additive: seed-aware dispatch, click features, feature-aware rollout
+# --------------------------------------------------------------------------- #
+
+import inspect
+
+from steer import click_features as _click_features
+
+_SIG_CACHE: dict = {}
+
+
+def _predict_signature(model):
+    key = type(model)
+    if key not in _SIG_CACHE:
+        _SIG_CACHE[key] = inspect.signature(model.predict)
+    return _SIG_CACHE[key]
+
+
+def model_predict(model, context, action=None, features=None, seed=None,
+                  return_shift=False):
+    """Call any Stage 4/5 model's ``predict`` with only the arguments it accepts.
+
+    Stage 4 models take ``(context, action)``; Stage 5 models add
+    ``features``/``seed``/``return_shift``. This keeps one call site for every model.
+    """
+    params = _predict_signature(model).parameters
+    kwargs = {}
+    if "features" in params:
+        kwargs["features"] = features
+    if "seed" in params:
+        kwargs["seed"] = seed
+    if "return_shift" in params:
+        kwargs["return_shift"] = return_shift
+    try:
+        return model.predict(context, action, **kwargs)
+    except TypeError:
+        # positional-only or narrower custom signature
+        return model.predict(context, action)
+
+
+def build_history(packed, episode, start, K, hist_extra=8):
+    """Click-action history (oldest -> newest) ending at the window's last context frame."""
+    e = packed.episodes[episode]
+    off = e["frame_offset"]
+    lo = max(0, start - hist_extra)
+    a = packed.action_vectors(packed.labels[off + lo: off + start + K])
+    return np.nan_to_num(a, nan=0.0).astype(np.float32)
+
+
+def features_from_history(hist, K, device):
+    """``hist`` [T,2] numpy -> [1, K, feat_dim] tensor for the last K steps."""
+    t = torch.from_numpy(np.ascontiguousarray(hist))[None].float().to(device)
+    return _click_features(t)[:, -K:]
+
+
+@torch.no_grad()
+def rollout_v2(packed, model, episode, start, K, steps, action_override=None,
+               seed=None, hist_extra=8, device="cuda"):
+    """Feature-aware, seed-aware closed-loop rollout.
+
+    ``action_override`` is either ``None`` (supply the episode's true actions) or a
+    ``[1, K, 2]`` tensor whose **last row is the held action** to inject at the
+    final context step and to hold for the whole rollout (the deployment-realistic
+    "a click lands at ``a_{K-1}`` and is held" counterfactual, as in
+    ``probe_click.py``). The earlier context actions stay the real ones, so the
+    ``deltaActionX`` feature at the last context step is the click event.
+
+    The click history fed to the model is the same click-signal history the player
+    would have (N1): real actions before the seed context, then the click signals
+    this rollout itself supplies.
+
+    Returns ``(frames [steps,3,H,W] in [-1,1], info dict)``.
+    """
+    e = packed.episodes[episode]
+    off = e["frame_offset"]
+    L = e["length"]
+    acts = packed.action_vectors(packed.labels[off: off + L])
+    acts = np.nan_to_num(acts, nan=0.0).astype(np.float32)
+    lo = max(0, start - hist_extra)
+    real_ctx = acts[start: start + K]
+    if action_override is not None:
+        held = action_override[0, -1].detach().cpu().numpy().astype(np.float32)
+        a_ctx = np.concatenate([real_ctx[: K - 1], held[None]], axis=0)  # click@a_{K-1}
+    else:
+        held = None
+        a_ctx = real_ctx
+    hist = [row for row in acts[lo: start + K - 1]]     # real history up to a_{K-2}
+    hist.append(a_ctx[K - 1])                           # a_{K-1} (click injected)
+    a_ctx_t = torch.from_numpy(np.ascontiguousarray(a_ctx))[None].to(device)
+
+    frames = frames_to_tensor(packed.images[off + start: off + start + K]).to(device)
+    preds, dxs = [], []
+    for t in range(steps):
+        feats = features_from_history(np.stack(hist), K, device)
+        c = frames[t: t + K].unsqueeze(0)
+        if action_override is not None:
+            a = a_ctx_t
+        else:
+            a = torch.from_numpy(np.ascontiguousarray(
+                acts[start + t: start + t + K]))[None].to(device)
+        out = model_predict(model, c, a, feats, seed, return_shift=True)
+        if isinstance(out, tuple):
+            nxt, info = out
+            if isinstance(info, dict) and info.get("dx") is not None:
+                dxs.append(float(info["dx"].reshape(-1)[0].item()))
+        else:
+            nxt = out
+        frames = torch.cat([frames, nxt], dim=0)
+        preds.append(nxt[0])
+        # the newest action in history for the next step
+        if action_override is not None:
+            hist.append(held)
+        else:
+            idx = min(start + t + K, L - 1)
+            hist.append(acts[idx])
+    info = {"dx": dxs if dxs else None}
+    return torch.stack(preds, dim=0), info
+
+
+# --------------------------------------------------------------------------- #
 # Top-level driver
 # --------------------------------------------------------------------------- #
 

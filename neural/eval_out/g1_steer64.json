@@ -1,0 +1,55 @@
+{
+ "n_contexts": 300,
+ "n_context_episodes": 195,
+ "n_onset_windows": 300,
+ "counterfactual": {
+  "None": {
+   "n_contexts": 300,
+   "n_episodes": 150,
+   "mean_shift_left_px": 2.5064460801696242,
+   "mean_shift_right_px": 0.2977787013942327,
+   "mean_shift_hold_px": 1.5087091206539658,
+   "left_correct": 0.4,
+   "right_correct": 0.36333333333333334,
+   "both_correct": 0.2,
+   "both_correct_near": 0.21755725190839695,
+   "n_near": 262,
+   "both_correct_far": 0.07894736842105263,
+   "n_far": 38
+  },
+  "pass_both_correct_near_0.70": false
+ },
+ "shift_ratio": {
+  "n": 300,
+  "mean_abs_pred_px": 5.583956312960975,
+  "mean_abs_real_px": 9.950578348926223,
+  "shift_ratio_h": 0.5510299888669234,
+  "sign_agreement": 0.375,
+  "pass_ratio_0.5": true
+ },
+ "sustained": {
+  "n": 277,
+  "sign_agreement": 0.4223826714801444,
+  "median_ratio": 0.09049706034271437,
+  "mean_ratio": 0.635971359305663,
+  "overshoot_px_per_step_tail": -0.6112362406367654,
+  "pass_sign_0.8": false,
+  "pass_ratio_band": false
+ },
+ "readout": {
+  "n": 300,
+  "readout_vs_truth_sign_acc": 0.5766666666666667,
+  "oracle_vs_truth_sign_acc": 0.33666666666666667,
+  "readout_vs_oracle_sign_acc": 0.23
+ },
+ "passes": {
+  "G1_both_correct_near>=0.70": false,
+  "G1_shift_ratio>=0.5": true,
+  "G1_sustained_sign>=0.8": false,
+  "G1_sustained_ratio_band": false
+ },
+ "checkpoint": "runs/steer64/best.pt",
+ "split": "val",
+ "K": 4,
+ "H": 10
+}

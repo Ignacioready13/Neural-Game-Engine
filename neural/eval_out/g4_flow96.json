@@ -1,0 +1,16 @@
+{
+ "device": "cuda",
+ "steps": 1000,
+ "mean_ms": 14.715707840012328,
+ "p95_ms": 23.56401739834837,
+ "worst_ms": 24.81685300153913,
+ "fps_mean": 67.9545972828421,
+ "fps_p95": 42.437585369890755,
+ "peak_vram_mb": 209.8935546875,
+ "pass_fps_15": true,
+ "pass_vram_3gb": true,
+ "checkpoint": "runs/flow96/best.pt",
+ "split": "val",
+ "K": 4,
+ "H": 10
+}

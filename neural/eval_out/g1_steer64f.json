@@ -1,0 +1,83 @@
+{
+ "n_contexts": 300,
+ "n_context_episodes": 195,
+ "n_onset_windows": 300,
+ "n_sustained_windows": 300,
+ "counterfactual": {
+  "None": {
+   "n_contexts": 300,
+   "n_episodes": 150,
+   "tf": {
+    "mean_left_px": 2.4306292847792306,
+    "mean_right_px": -2.2159816933919987,
+    "mean_hold_px": 0.10345649304644515,
+    "left_correct": 0.94,
+    "right_correct": 0.8233333333333334,
+    "both_correct_directions": 0.7733333333333333,
+    "left_beats_hold": 0.67,
+    "hold_beats_right": 0.69,
+    "both_correct_ordered": 0.36,
+    "left_gt_right": 1.0
+   },
+   "cl": {
+    "mean_left_px": 0.9238521069057922,
+    "mean_right_px": -2.67487796057329,
+    "mean_hold_px": -0.39061583644089354,
+    "left_correct": 0.48333333333333334,
+    "right_correct": 0.5766666666666667,
+    "both_correct_directions": 0.13,
+    "left_beats_hold": 0.5633333333333334,
+    "hold_beats_right": 0.6366666666666667,
+    "both_correct_ordered": 0.23666666666666666,
+    "left_gt_right": 0.8566666666666667
+   },
+   "both_correct_directions_near": 0.7938931297709924,
+   "n_near": 262,
+   "both_correct_directions_far": 0.631578947368421,
+   "n_far": 38
+  },
+  "pass_both_correct_near_0.70": true
+ },
+ "shift_ratio": {
+  "n": 300,
+  "mean_abs_pred_px": 7.073968266537828,
+  "mean_abs_real_px": 9.129402368307248,
+  "shift_ratio_h": 0.7630198425537932,
+  "sign_agreement": 0.6127946127946128,
+  "pass_ratio_0.5": true
+ },
+ "sustained": {
+  "n": 265,
+  "sign_agreement": 0.6566037735849056,
+  "median_ratio": 0.9179223072311726,
+  "mean_ratio": 1.1241956807618636,
+  "overshoot_px_per_step_tail": -0.024792683206517497,
+  "pass_sign_0.8": false,
+  "pass_ratio_band": true
+ },
+ "sustained_all_onsets": {
+  "n": 175,
+  "sign_agreement": 0.5542857142857143,
+  "median_ratio": 0.39814036710122785,
+  "mean_ratio": 0.6950583913322947,
+  "overshoot_px_per_step_tail": -0.36438197061810085,
+  "pass_sign_0.8": false,
+  "pass_ratio_band": false
+ },
+ "readout": {
+  "n": 300,
+  "readout_vs_truth_sign_acc": 0.8433333333333334,
+  "readout_vs_oracle_sign_acc": 0.8070175438596491,
+  "oracle_vs_truth_sign_acc": 0.9543859649122807
+ },
+ "passes": {
+  "G1_both_correct_near>=0.70": false,
+  "G1_shift_ratio>=0.5": true,
+  "G1_sustained_sign>=0.8": false,
+  "G1_sustained_ratio_band": true
+ },
+ "checkpoint": "runs/steer64f/best.pt",
+ "split": "val",
+ "K": 4,
+ "H": 10
+}
