@@ -91,6 +91,13 @@ export async function runPlan(spec: PlanRunSpec): Promise<PlanRunSummary> {
   const failures: Array<{ episodeId: string; seed: number; error: string }> = [];
   const results: EpisodeResult[] = [];
 
+  // Minimum finished episodes before the abort-share early stop may fire. A
+  // small early sample is noisy (a couple of aborts can look like a runaway
+  // rate), so the stop needs a real denominator. The per-plan field is an
+  // override; the fail-safe thresholds themselves (clipStopShare / the alert)
+  // are unchanged. See Stage 4B.
+  const clipStopMinFinished = Math.max(1, plan.clipStopMinEpisodes ?? 100);
+
   // Running counters for the early-stop check (4.11). Updated synchronously in
   // the worker loop; JavaScript's single thread makes this race-free.
   let finished = priorComplete;
@@ -149,8 +156,8 @@ export async function runPlan(spec: PlanRunSpec): Promise<PlanRunSummary> {
         }
         console.log(`[plan] episode ${id}: ${result.status} (${result.frameCount} frames kept)`);
 
-        // Early stop: after >= 20 finished, halt if the abort share is too high.
-        if (finished >= 20 && abortCount / finished > config.clipStopShare) {
+        // Early stop: after enough finished episodes, halt if the abort share is too high.
+        if (finished >= clipStopMinFinished && abortCount / finished > config.clipStopShare) {
           stop = true;
           console.warn(
             `[plan] abort share ${((abortCount / finished) * 100).toFixed(1)}% exceeds ` +

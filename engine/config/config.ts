@@ -301,6 +301,13 @@ export const MIXTURE_PROFILES = {
   mixture: { idle: 10, decisive: 30, late: 10, dither: 10, prober: 15, spammer: 5, uniform: 20 },
   uniformOnly: { uniform: 1 },
   doorAwareOnly: { decisive: 3, late: 1, dither: 1 },
+  // Stage 4B bulk profile: reweights toward the personas that (measured on the
+  // pilot and a 60-episode trial) yield the most counterfactual "two reachable
+  // doors on opposite sides of screen centre" contexts per frame — dither
+  // (re-clicks a different door, so the player lingers in multi-door rooms) and
+  // spammer — while keeping idle/uniform/late at a floor for the never-clicked
+  // and stale-held-click regimes. Never edit `mixture`: the pilot depends on it.
+  mixture_v2: { idle: 6, decisive: 20, late: 6, dither: 30, prober: 7, spammer: 26, uniform: 5 },
 } as const;
 
 // ---------------------------------------------------------------------------

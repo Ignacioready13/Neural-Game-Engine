@@ -7,6 +7,63 @@ and `engine/docs/CONTRACTS.md`. This file replaces the old `handoff.md`.
 
 ---
 
+## 2026-10-11 — Stage 4B: bulk dataset, `mixture_v2`, packing, coverage
+
+**Asked.** Build the bulk training set the real model will use — tuned bot mixture,
+large val/test splits, packing at two resolutions, and a coverage report (brief
+`stage4b-prompt-bulk-dataset.txt`).
+
+**Built.** `engine/data/bulk_v1/` — 1,500 planned episodes (1,100/200/200) × 600
+frames under a **new** `mixture_v2` profile; plan `engine/data/bulk_v1.plan.json`;
+`report.json`/`report.md`; `aborted.jsonl`. Packed at 96×72 (18.17 GB) and 64×48
+(8.08 GB) with the Stage-3 packer under `neural/data/` (gitignored).
+`neural/docs/STAGE4B-REPORT.md` + sample image `neural/review/bulk_v1_sample.png`.
+`mixture`/`uniformOnly`/`doorAwareOnly` are **unchanged**, so the pilot is
+reproducible; the engine simulation/rendering/schema were not touched; git was not
+touched.
+
+**Result.** 1,445 complete + 55 aborted (3.67 %), **876,261 frames**. Abort share
+3.67 %, turn-window direction balance 50.1/49.9 (target 47–53 %), `viewUnsafe`
+0.36 %. Qualifying click-counterfactual yield **126.5/1,000** (near-door 100.1) on
+train — **1.44× / 1.50×** the pilot's 87.7/66.8. Val/test each hold **>11,500
+near-door contexts from ~190 episodes** (target ≥400 from ≥100). All persona
+frame shares ≥ 4.7 %; straightest-choice 48.6 % and label ambiguity 11.8 %
+(unchanged from the pilot). Packed totals equal the manifests at both
+resolutions; the loader tests pass on the bulk set.
+
+**Tuning.** One round. Per-persona yield measurement showed `spammer`
+(173.9/1,000) and `dither` (138.3/1,000) dominate, so `mixture_v2` raises them
+(5→26 and 10→30) and lowers `uniform`/`idle`/`late`/`prober`, keeping every persona
+≥ ~5 % of frames. No bot bug: the left/right imbalance is not an engine
+world-generation problem (the world is left/right balanced, ~48.5/51.5), so no bot
+or engine fix was needed.
+
+**Fixed (memory safety).** Post-pack verification OOM-killed the editor session:
+`torch`'s DataLoader uses the `forkserver` start method here, so the dataset is
+pickled to each worker — and `np.memmap` pickles by copying its whole file, so
+each worker tried to materialise the 18 GB `images.bin`. Added
+`PackedDataset.__reduce__` (re-open the memmap from the path in the worker);
+verified 642 MB at `num_workers=2` (was OOM), bulk loader throughput 3,808 w/s (2
+workers) / 7,672 w/s (4 workers) at 2.8 GB. Added `neural/memcap.sh` to run heavy
+jobs in a memory-capped systemd user scope so a runaway can never take down the
+editor. **Swap was not touched** (and is not needed — the runaway was one bug, now
+fixed).
+
+**Also changed (small, additive).** `workerPool.ts`/`plan.ts`: the abort-share
+early stop now needs ≥ `clipStopMinEpisodes` (default 100) finished episodes (was
+hard-coded 20), at the user's request; thresholds and the failsafe are unchanged.
+`cli.ts` help lists profiles dynamically. `analysis.py` exposes `clickX`,
+`clickAccepted`, `persona`; `probe_click.py` `_select_contexts` gained an optional
+`split`; `conftest.py`/`test_loader.py` gained env knobs to point the tests at the
+bulk set. New read-only helpers: `count_contexts.py`, `persona_stats.py`,
+`sample_grid.py`, `throughput_bulk.py`.
+
+**Open (see report §8).** Whether to keep the `dataset.py` loader change; whether
+the new early-stop default should be permanent; two world seeds (`10000017`,
+`10000022`) abort under both profiles (engine L2 edge cases, no fix made).
+
+---
+
 ## 2026-10-11 — Stage 4: baseline action-conditioned model and evaluation harness
 
 **Asked.** Train the first neural model on the pilot data and — more importantly —

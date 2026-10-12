@@ -34,6 +34,11 @@ class Analysis:
         self.playerX = np.full(packed.num_frames, np.nan, dtype=np.float32)
         self.playerZ = np.full(packed.num_frames, np.nan, dtype=np.float32)
         self.targetDoor = [None] * packed.num_frames
+        # raw click fields (used by the Stage 4B coverage counter; not model inputs)
+        self.clickX = np.full(packed.num_frames, np.nan, dtype=np.float32)
+        self.clickAccepted = np.full(packed.num_frames, np.nan, dtype=np.float32)
+        # persona active at each frame (Stage 4B per-persona stats)
+        self.persona = np.full(packed.num_frames, None, dtype=object)
 
         path = os.path.join(packed.path, "analysis.jsonl")
         offsets = {e["episode_index"]: e["frame_offset"] for e in packed.episodes}
@@ -54,6 +59,15 @@ class Analysis:
                         arr[g] = float(v)
                 if row.get("targetDoorwayId") is not None:
                     self.targetDoor[g] = row["targetDoorwayId"]
+                cx = row.get("clickX")
+                if cx is not None:
+                    self.clickX[g] = float(cx)
+                ca = row.get("clickAccepted")
+                if ca is not None:
+                    self.clickAccepted[g] = 1.0 if ca else 0.0
+                pe = row.get("persona")
+                if pe is not None:
+                    self.persona[g] = pe
                 cand = row.get("candidates")
                 if cand is not None:
                     self.candidates[g] = [

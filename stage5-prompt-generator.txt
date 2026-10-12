@@ -1,0 +1,477 @@
+PROJECT BRIEF — STAGE 5
+THE REAL GENERATOR: ACTION-CONDITIONED, STEERABLE, STOCHASTIC FRAME GENERATION
+NeuralGameEngine (the /neural half of the monorepo)
+================================================================================
+
+--------------------------------------------------------------------------------
+0. ORIENTATION AND RULES OF ENGAGEMENT
+--------------------------------------------------------------------------------
+Stages 1-4B produced the classical engine (a teacher, now finished), a pilot dataset,
+a Python loader and packer, a baseline model plus evaluation harness, a long series of
+probes about how a model can learn to follow a click, and a bulk dataset (bulk_v1).
+This stage builds the REAL MODEL: a neural network that, given recent frames and the
+player's click signal, generates the next frame, over and over, in real time, with no
+engine anywhere in the loop. This is the longest and riskiest stage of the project, so
+it is organized into milestones with numeric gates.
+
+Read first, in this order:
+  - README.md (repo root), CHANGES-LOG.md (newest first)
+  - neural/README.md                       environment, packer, loader, evaluation harness,
+                                           neural/memcap.sh
+  - neural/docs/STAGE4-REPORT.md           READ ALL OF IT CAREFULLY, especially the sections
+                                           on the effect-size analysis, the 10-step lookahead
+                                           objective, the hold-last results, probes P4/P5/P6,
+                                           and the recommendation for the diffusion stage
+  - neural/docs/STAGE4B-REPORT.md          the bulk dataset: sizes, splits, coverage
+  - engine/docs/DATASET-SCHEMA.md          the data contract (alignment rule, labels)
+  - neural/probe_click.py and the Stage 4 scripts it references (head_predict.py,
+    train_hold.py, train_hold_aux.py, train_future.py, and the P6 scripts; the
+    Stage 4 report names them), eval_harness.py, metrics.py, review_images.py, bench.py
+Where this brief and the code or docs disagree, trust the code and the schema, and
+tell the user. Where this brief's summary of Stage 4 numbers differs from the Stage 4
+report, trust the report.
+
+Decisions the user already made (Stage 4B close-out): keep the PackedDataset.__reduce__
+loader fix (it is a bug fix; list it among Stage 3 changes in your report) and keep
+clipStopMinEpisodes = 100 as the permanent plan-runner default. Nothing else is
+pending from Stage 4B.
+
+RULES OF ENGAGEMENT (these override anything else in this brief):
+
+ 1. GIT IS OFF LIMITS. The user manages git. Never run any command that changes
+    repository state or the index (add, commit, tag, branch, checkout, switch, stash,
+    reset, restore, rebase, merge, push, pull, and so on). Read-only inspection (git
+    diff, git status, git log, git show, git rev-parse) is fine. You MAY edit
+    .gitignore for checkpoints, run outputs, review folders and caches; list any such
+    edit in your report. Subagents are bound by this rule too; say so in every
+    subagent prompt.
+ 2. NO SUDO, NO SYSTEM CHANGES. Work in user space (the existing virtual environment;
+    pip installs inside it are fine and must be added to the pinned requirements). If
+    anything would need sudo or root, STOP, tell the user exactly what to run and why,
+    and wait. No workarounds.
+ 3. THE ENGINE AND THE DATASETS ARE READ-ONLY. Do not modify /engine, the pilot, or
+    bulk_v1 (PNG or packed). Do not generate new engine data in this stage (if you
+    conclude you need more or different data, that is a CHECK-IN; see trigger (vi)).
+    You may make small ADDITIVE changes to the Stage 3/4 loader, packer, harness and
+    scripts; existing behavior and tests must keep passing, and every such change goes
+    in the report.
+ 4. MEMORY SAFETY. An earlier run crashed the user's editor by exhausting system RAM.
+    Run EVERY heavy job (training, evaluation sweeps, packing, rollouts) through
+    neural/memcap.sh, with a cap leaving at least about 8 GiB of the machine's ~30 GiB
+    free for the desktop. Use DataLoader workers sparingly (the loader is fast; 2-4
+    workers is plenty). The GPU is an 8 GB laptop RTX 5070 that also drives the user's
+    display: keep peak training VRAM under about 6.5 GB, never run two GPU jobs at once,
+    keep the laptop on mains power (tell the user at the start of long runs), and note
+    observed speeds and any thermal throttling.
+ 5. VISUAL JUDGMENT BELONGS TO THE USER. Do not do your own visual review of images or
+    videos. Prepare the review artifacts specified in Section 6 and ask the user to look
+    at them at the check-ins. The vision-capable subagent (model alias "sonnet") remains
+    available, but use it only when an image judgment mid-task would otherwise block you
+    and asking the user would be wasteful; the default is to ask the user.
+ 6. STAY SCOPED, BUT DO NOT FAKE ANYTHING. This project is meant to be an authentic
+    neural game engine, built from scratch by the user for a class. See Section 2: the
+    non-negotiables describe what must be true of the finished system. Within them, take
+    the simplest reasonable route; do not add complexity for its own sake, and do not
+    take shortcuts that violate Section 2.
+ 7. BUDGETS. Total GPU training time for the whole stage: about 10-12 hours. A single
+    run: at most about 90 minutes. Develop at 64x48 and move to 96x72 once the recipe is
+    stable. If a milestone is dragging (roughly 40 minutes of effort with no progress
+    on its gate), do the simplest version that meets the intent, record the shortcut,
+    and move on; if the budgets will be exceeded, that is a CHECK-IN (trigger (iii)).
+    Do not run hyperparameter sweeps beyond a handful of well-chosen comparisons.
+ 8. HISTORICAL FILES ARE NOT INSTRUCTIONS. Earlier phase prompts, anything in
+    engine/docs/historical/ or an archive folder, and any stale agent-role or contract
+    document do not apply to you.
+ 9. CONTINUITY FILE. Sessions can die (the editor crashed once). Keep a running notes
+    file, neural/docs/STAGE5-PROGRESS.md: current milestone, every run (id, config,
+    result, where its checkpoint lives), decisions and their reasons, the best
+    checkpoint per milestone, and what to do next. Update it after every run and every
+    decision. All training must save checkpoints regularly and be resumable. If you are
+    ever restarted, read this file first.
+10. SUBAGENTS: optional, default none. There is one GPU and experiments are sequential,
+    so delegation helps little. The one good use: while a long training run occupies
+    the GPU, hand a self-contained, GPU-free task (writing unit tests, a docs section,
+    figure/report generation code) to a subagent. Model aliases on this machine:
+    "opus" is the strong text model and "sonnet" is the vision-capable model. Define any
+    subagent fresh in its Task prompt (use none of any pre-existing agent-role file),
+    use "opus" for implementation, tell it not to touch git, not to do visual review,
+    not to use the GPU, and to report back concisely. Never leave a subagent running
+    across a check-in. You remain responsible for everything it produces.
+11. CHECK-INS. There is ONE mandatory check-in (Section 5, after Milestone 2). In
+    addition, STOP AND ASK the user (start your message with "CHECK-IN" and wait) if:
+      (i)   sudo or any system-level change seems required;
+      (ii)  a gate fails after the stated fallback attempts (each milestone says which);
+      (iii) the compute budgets of rule 7 will be exceeded, or GPU memory, speed or
+            stability makes the plan infeasible;
+      (iv)  evidence of a label or data problem (for example the alignment rule or the
+            actionX semantics seem wrong in practice);
+      (v)   you conclude an engine-side change would be needed (for example a steering
+            responsiveness change): report it with numbers, do NOT touch the engine;
+      (vi)  you conclude new or different engine data is needed;
+      (vii) a design choice has a large tradeoff that this brief does not settle and
+            would be expensive to redo later.
+    Otherwise decide sensibly, document the decision in the progress file, and continue.
+
+--------------------------------------------------------------------------------
+1. WHERE THE PROJECT STANDS (WHAT WE LEARNED; THIS SHAPES THE DESIGN)
+--------------------------------------------------------------------------------
+The system. A player walks forward at constant speed through procedurally generated
+backrooms-style hallways and rooms and steers by clicking: only the click's horizontal
+position matters, it is held until the next accepted click (debounce 150 ms = 3 frames
+at 20 Hz), and the engine resolves it to the nearest reachable doorway with a jerk-limited
+turn. The network never sees doors or the engine. The training data is the engine's
+rendering of bot-driven episodes: a frame sequence plus, per frame, actionX (the
+held click position that drives the transition from this frame to the NEXT) and
+actionHasClicked. Dataset bulk_v1: 876,261 frames, 1,445 episodes (train about 1,100;
+val and test about 190 each), packed at 96x72 and 64x48; direction balance is 50/50;
+val and test each hold more than 11,500 near-door two-door contexts.
+
+The core difficulty (the effect-size problem). At 20 Hz with jerk-limited steering, a
+click moves the NEXT frame by only about 0.03 pixel at 64x48. The turn builds up over
+about 10 frames (median time to align with a door) to roughly 10 pixels. So the
+action's effect on the next frame is far below noise and the context frames already
+show any turn in progress; a one-step pixel loss therefore teaches a model to ignore the
+click. The baseline model beat "repeat the last frame" by about 3x but ignored actions,
+and its rollouts melted into abstract blur within about 10 steps (half a second); it
+averaged over unpredictable new content (doorways appearing) instead of generating it.
+Its rollouts also drifted toward red; color stability must be watched.
+
+What the Stage 4 probes established (see the report for exact numbers):
+  - The conditioning pathway works; the problem is the training signal.
+  - Supervising the prediction 10 steps ahead makes the model action-responsive, but
+    only when it is given the TRUE future clicks. At play time only the current held
+    click is known. Under the deployment-realistic "hold-last" conditioning (future
+    action = the last action repeated) the model learned "a turn is coming" but not
+    which way.
+  - A small network CAN read the turn direction from the context frames plus the clicks
+    (probe P4: binary sign accuracy about 0.78-0.85 at 64x48 against an engine-rule
+    ceiling of about 0.87), and the biggest single gain came from an explicit
+    DeltaActionX input (the change in action, a_t minus a_{t-1}). Resolution (64x48 vs
+    96x72) was not the bottleneck.
+  - An auxiliary direction head on a pixel-loss decoder fixed the encoder but NOT the
+    output frames (P5): a plain decoder under pixel loss never maps "the bottleneck knows
+    it is turning left" to a sub-pixel-to-few-pixel global view shift.
+  - Handing the network the correct direction as a direct input and making its output
+    structured as "warp the last frame by a predicted shift, plus a residual" produced
+    correct click-direction behavior about 87% of the time (P6, but only ~30 contexts
+    from 15 val episodes, and with an ORACLE direction taken from the engine). When the
+    residual was left unconstrained it shadowed the warp (the model drew the image
+    through the residual and ignored the shift; performance fell to chance level).
+  - Never yet tested: the same thing with the direction supplied by the LEARNED
+    readout (no oracle); steering sustained over many frames; and any of this inside
+    a generative model.
+So the design direction is: a learned direction/ego-motion readout (supervised from the
+engine's ground truth during training only) feeds a structured motion output, and a
+stochastic generative component creates new content (doorways, rooms, far ends) without
+being able to override the steering.
+
+Facts for planning: the baseline (a 708k-parameter residual U-Net) runs in well under
+1 ms per frame, so there is large headroom for a heavier few-step generator. The target
+is real-time play (at least 15 frames per second, aim for 25+) on the laptop RTX 5070 at
+96x72, including everything in the generation loop. Loader throughput on bulk 96x72 with
+K = 4 is about 3,800 windows/s (2 workers) to 7,700 (4 workers). The bulk 96x72 set is
+18 GB and does not fit in RAM comfortably alongside everything else; use the memory-mapped
+loader as it is.
+
+--------------------------------------------------------------------------------
+2. NON-NEGOTIABLES: WHAT MUST BE TRUE OF THE FINISHED SYSTEM
+--------------------------------------------------------------------------------
+This is the definition of "authentic" for this project. Everything else is your call.
+  N1. At play time the model's ONLY inputs are: its own recent generated frames (plus an
+      initial seed context of real frames to start from) and the click-derived signals
+      (actionX, actionHasClicked, and anything derived from the click history such as
+      DeltaActionX or frames-since-click). Nothing else.
+  N2. At play time nothing from the engine is available: no door positions, no sidecar
+      fields, no ground-truth heading, no room or entity labels. You MAY supervise
+      internal heads (direction, ego-motion, door-position) from the sidecar DURING
+      TRAINING, and the warp operation is a differentiable part of the network, which is
+      fine. Prove N1/N2 with a test (Section 7, item 5).
+  N3. Trained from scratch. No pretrained weights, no downloaded models, no fine-tuning of
+      someone else's checkpoint.
+  N4. No clean categorical labels as network inputs (room type, "door ahead", color-coded
+      exits, and so on). The user plans later versions where spaces become undefined
+      and dreamlike; the design must not depend on classifying the world into clean
+      categories. Learned continuous internal representations are fine.
+  N5. The generative part is genuinely stochastic and free to invent content. Different
+      random seeds from the same context should give different (plausible) new content
+      where something new is revealed. Steering, by contrast, should be controlled
+      by the click.
+  N6. No retrieval or replay: at play time the system must not paste in dataset frames or
+      patches (other than the initial seed context). All pixels after the seed come out
+      of the network.
+  N7. The generator must run in real time on this laptop (Gate G4). A slower model that
+      looks better is a research result, not the deliverable.
+
+--------------------------------------------------------------------------------
+3. WORK PLAN: MILESTONES AND GATES
+--------------------------------------------------------------------------------
+Architecture, loss functions, K, flow/shift representation, sampler, number of denoising
+steps, training recipe and tricks are YOURS to decide within Section 2; document them
+and the reasons. Develop at 64x48 first, then train the final recipe at 96x72. Use mirror
+augmentation (flip the image, negate actionX and DeltaActionX; the engine's world is
+left/right symmetric and the bulk turn balance is 50/50). Sample training windows so
+that click onsets and retargets and door-reveal moments are well represented, while
+steady walking, the never-clicked regime (actionHasClicked = 0, where the engine steers
+toward the straightest door by itself) and the stale-held-click regime (the player
+stopped clicking) all stay in the training mix. Drop viewUnsafe windows as the loader
+does. Select models on the validation split only; the test split is touched ONCE, at the
+end of Milestone 4.
+
+The evaluation power available now is large (val has about 190 episodes and over 11,500
+near-door two-door contexts). Use at least 300 qualifying contexts drawn from at least
+100 distinct val episodes, mid-episode (never consecutive starts of one episode), for
+every steering gate, and report near-door and far-door contexts separately. Reuse the
+qualifying-context definition in neural/probe_click.py.
+
+--- MILESTONE 1: THE STEERING CORE (deterministic; no generative part yet) ---
+Goal: show that, under PLAY-TIME conditions (hold-last: only the current click and past
+frames and clicks are known; a click arriving at the most recent step), a network with
+NO oracle inputs turns the view the right way, by the right amount, and keeps doing so
+for many frames.
+ Build: (a) a learned readout of the intended turn (direction and magnitude, and enough
+ of its time course to drive the next several frames) from context frames plus click
+ history, including an explicit DeltaActionX-type input; supervised from the sidecar
+ (training only); (b) a structured motion output driven by that readout (a predicted
+ horizontal shift or low-resolution flow applied to the last frame by differentiable
+ resampling, handling both the turn and the constant forward motion) plus a residual
+ that is constrained so it cannot shadow the motion (for example gated, regularized,
+ or deferred to the generator in Milestone 2); (c) the evaluation of Gate G1.
+ Known hazard to design for: the per-frame shift is a fraction of a pixel, and
+ repeatedly resampling an already-resampled image blurs it, accumulating over a rollout.
+ Measure sharpness versus rollout length for this component and choose a mitigation
+ (for example accumulating the fractional offset, a better resampling scheme, or
+ relying on the generator in Milestone 2 to restore detail); document the choice.
+ First, for a quick reference, evaluate the existing pilot-trained Stage 4 checkpoints
+ on the new, much larger val set and note how the earlier headline numbers hold up at
+ scale (cheap; do not retrain them).
+ GATE G1 (hard), on the new val set under hold-last with the LEARNED readout (no oracle):
+   - click-counterfactual (left door vs right door vs no click, probe_click.py style):
+     both-correct at least 0.70 on near-door contexts (chance is 0.25), per-side direction
+     accuracy reported, far-door contexts reported separately;
+   - predicted-versus-real shift ratio at a 10-step horizon at least 0.5 (it was about
+     0.08 for the Stage 4 lookahead model);
+   - sustained steering: over 40 steps after a click, with the true click sequence from
+     the real clip supplied (hold-last, closed loop on the model's own frames), the
+     model's cumulative image shift (phase-correlation estimate, as in the harness's
+     action-following metric) versus the real clip's: sign agreement at least 0.8 and a
+     median ratio between 0.6 and 1.4 on onset windows; and the view must stop turning
+     when the real one does (no runaway drift) — report the overshoot;
+   - readout direction accuracy (sign) reported against the engine-rule ceiling.
+ If G1 is missed, try in order (each a short, well-chosen experiment): longer or
+ richer click-history features; a larger readout trained with the multi-step shift
+ supervision; a supervised door-position head (a learned network predicting where doors
+ are in the frame, trained from the sidecar's candidates, feeding the readout; this
+ is a legitimate learned perception module, not an oracle). If G1 is still missed,
+ CHECK-IN with numbers and options, including an engine-side steering responsiveness
+ change (a tuning knob that affects how turns feel; the user decides; do not touch
+ the engine).
+
+--- MILESTONE 2: THE GENERATOR (stochastic, few-step) ---
+Goal: replace "blurry average" with sampled, sharp new content while keeping the
+steering of Milestone 1 intact.
+ Build a stochastic generative model (diffusion or flow-matching style; your choice)
+ for the next frame that is conditioned on the recent frames, the click-derived signals,
+ and the structured motion from Milestone 1 (for instance the motion-warped last frame
+ plus the readout features), so the generator mostly has to invent what is newly
+ revealed and sharpen what the warp blurs, while the motion carries the steering.
+ Design for at most about 4 sampling steps per frame from the start (the real-time
+ budget); you may consider distillation only if you find it necessary. Expect to need
+ tricks for autoregressive stability that are standard in this field: noise
+ augmentation of the context frames during training, training on the model's own
+ outputs for part of the time, and short context. Conditioning dropout with guidance on
+ the action is an option if the model under-uses direction, but steering must come
+ primarily from the structured motion path, not from the denoiser alone.
+ Train from scratch at 64x48, then the final recipe at 96x72.
+ GATE G2 (hard for steering, targets for quality), on val:
+   - steering: the Gate G1 numbers must still hold WITH the generator in the loop
+     (same thresholds, several sampling seeds; report variance across seeds);
+   - one-step quality: report pixel metrics versus the Stage 4 baseline, but also
+     sharpness (for example mean gradient magnitude or Laplacian variance) and
+     per-channel color statistics against real frames; the generator's sharpness should
+     be within about 25% of the real frames' and well above the baseline's; do not
+     judge the generator mainly by L1, since a sharp-but-different frame scores worse
+     than a blurry average on L1 by design;
+   - diversity: at doorway-reveal moments, different seeds should give visibly
+     different content; report a simple measure of seed-to-seed variation versus
+     steady-walking moments (it should be larger at reveals);
+   - rollout to 60 steps with the true clicks: report sharpness, color statistics, and
+     the shift metrics against horizon, and the horizon at which the model stops
+     looking like real frames by these statistics.
+ CHECK-IN 1 (mandatory) at the end of this milestone; see Section 5.
+
+--- MILESTONE 3: LONG-HORIZON STABILITY ---
+Goal: the model must keep producing plausible, steerable hallways for a long time in
+closed loop, since real play is open-ended.
+ Run closed-loop rollouts of 300 frames (15 seconds) from real seed contexts, on at least
+ 30 val clips, in three scenarios: (1) no clicks at all (the engine's default behavior is
+ to drift toward the straightest door; the model learned this from data; check it keeps
+ walking sensibly), (2) the real click sequence of the source episode, and (3) a scripted
+ alternating left/right click pattern with reasonable spacing. Track against horizon:
+ sharpness, per-channel color statistics (including any drift toward red), brightness
+ and contrast, the fraction of nearly-black or saturated frames, the apparent motion
+ (shift) statistics, and frame-to-frame change (to catch flicker or freezing). Fix what
+ degrades: exposure-bias mitigations (more training on own outputs, noise augmentation
+ levels, context length), color stabilization, whatever you find. Do not "fix" the
+ world's content by adding any engine information.
+ Optional if cheap and informative: train a small real-versus-generated frame
+ classifier and report the horizon at which generated frames become distinguishable.
+ GATE G3 (targets; report honestly if missed): through 300 frames in all three
+ scenarios, sharpness within about 25% of real, per-channel mean within about 0.03 (on
+ a 0-1 scale) of the real distribution, no collapse to black/white/uniform frames, no
+ frozen image (motion statistics comparable to real), and the Gate G1 steering behavior
+ still holding in scenario 2 and 3 at 100+ frames in. If these cannot be met, document
+ the failure mode precisely (this is itself a result for the user's write-up) and
+ CHECK-IN with options only if you believe a different approach (not more tuning) is
+ required.
+
+--- MILESTONE 4: FINAL EVALUATION, SPEED, AND THE HARDWARE ANALYSIS ---
+ Do once, with the final model at 96x72:
+  - Evaluate the final model on the TEST split (once): the steering gates, the quality
+    and diversity metrics, and 300-frame closed-loop stability.
+  - Real-time Gate G4 (hard): the complete per-frame generation loop (readout, motion,
+    all sampling steps, decode to a displayable uint8 image, with CUDA synchronized)
+    at batch size 1 on this GPU on mains power: at least 15 frames/s sustained over
+    1,000 frames (report mean, p95 and worst frame latency), aim for 25+. Peak
+    inference VRAM under about 3 GB. If a model slightly above budget is much better,
+    report both; ship the one that meets G4. If G4 cannot be met, CHECK-IN with the
+    measured breakdown and options (fewer steps, smaller denoiser, lower precision,
+    CUDA graphs or compilation, and so on).
+  - Measurements for the user's neuromorphic/unconventional-computing class: parameter
+    count; multiply-adds per generated frame and the share contributed by each component
+    (readout, motion, denoiser per step, decoder); numeric precision used; memory
+    traffic or activation memory per frame if you can estimate it cheaply; the fraction
+    of operations that are dense convolution/matmul versus anything else; the measured
+    sparsity of activations in the trained network (share of exact or near zeros after its
+    nonlinearities); the measured frame-to-frame sparsity of the data and of generated
+    frames (share of pixels changing by more than a small threshold between consecutive
+    frames); and the latency breakdown. State what these suggest about hardware
+    (dense tensor accelerator versus event-driven or in-memory designs) in two or three
+    technical paragraphs. Keep it measured, not speculative.
+
+--- MILESTONE 5: MINIMAL INTERACTIVE PLAYER ---
+ Required if Gate G4 is met (otherwise skip and say so). A thin, separate client script
+ (the engine is NOT involved) that: loads the final checkpoint; picks a seed context of K
+ real frames from the dataset's early-episode frames (random per launch) and generates
+ from there; shows the generated frames in a window at an enlarged size; reads the mouse,
+ where a click sets the held signal exactly the way the engine does (X = clamp((clientX -
+ left) / width * 2 - 1, -1, 1), left is negative; a click closer than 3 frames (150 ms)
+ after the last ACCEPTED click is ignored for the held signal; actionHasClicked becomes 1
+ after the first accepted click); draws its own brief translucent click pulse over the
+ displayed image (the pulse is NOT part of the generated frames and must never be fed back
+ to the model); shows an fps readout; and offers a scripted headless mode that plays a
+ given click sequence for N frames and writes a video or frame strip (used for your tests
+ and for the user's review). Keep dependencies light and pip-installable inside the venv;
+ no sudo. You cannot judge the live feel; verify the headless mode and that the
+ interactive window opens and runs, then hand it to the user.
+
+--------------------------------------------------------------------------------
+4. EVALUATION HARNESS EXTENSIONS
+--------------------------------------------------------------------------------
+Extend neural/eval_harness.py ADDITIVELY so any model with the interface (context frames
+and action history in, sampled next frame out, plus a closed-loop rollout driver) can be
+evaluated, including stochastic models: explicit seeds, multiple samples per context, and
+aggregation across seeds. Add the metrics the milestones need (sharpness, color
+statistics, seed diversity, cumulative shift, long-horizon stability tracks) as small,
+tested functions, and the three-part action-responsiveness gate from the Stage 4 report
+(click counterfactual, horizon ablation, readout accuracy) as a single command. Keep the
+Stage 4 models evaluable so we can compare. Document how to run everything in
+neural/README.md.
+
+--------------------------------------------------------------------------------
+5. ORDER OF WORK AND THE CHECK-IN
+--------------------------------------------------------------------------------
+  Step 0. Orient; read the files in Section 0; confirm the environment and memcap.sh
+          work (a short GPU smoke test through memcap.sh); create STAGE5-PROGRESS.md;
+          write your short plan (milestone order, what you will try first, and your
+          estimate of GPU hours per milestone) at the top of it. No need to wait for
+          approval of the plan.
+  Milestone 1, then Milestone 2 as specified above.
+
+  >>> CHECK-IN 1 (mandatory), at the end of Milestone 2. Stop and send a message that
+      begins with the words "CHECK-IN 1" containing, concisely:
+        - what you built (architecture in a few lines, parameter count, steps per frame)
+          and how steering is carried;
+        - the Gate G1 and G2 results with numbers (including seed variance), and how G1
+          evolved, in a small table;
+        - a note on any fallbacks you used and anything that surprised you;
+        - the GPU time used so far and your plan and time estimate for Milestones 3-5;
+        - the paths of the review artifacts of Section 6 (items 1 to 3) and exactly what
+          you want the user to look at;
+        - any "needs user decision" items.
+      End with the specific questions you need answered, then WAIT. The user is the
+      visual judge: whether the generated content looks right is their call, and a
+      "this looks wrong in way X" from them can save hours.
+  Then Milestones 3, 4 and 5 without further mandatory stops (conditional check-ins still
+  apply).
+
+--------------------------------------------------------------------------------
+6. REVIEW ARTIFACTS FOR THE USER (gitignored review folder, e.g. neural/review/stage5/)
+--------------------------------------------------------------------------------
+Keep each image comfortably viewable (enlarge with nearest-neighbor), with captions that
+name the clip, frame, action values and seed. Use the best model at 96x72 (say which).
+  1. rollouts.png: 4 distinct val clips (different episodes), each a row of real frames
+     above a row of generated frames every 4th step for 60 steps, true clicks supplied.
+  2. counterfactual.png: 4 contexts from distinct episodes with a close door on each side,
+     the same context rolled forward under "click the left door", "click the right door"
+     and "no click", at several time steps, action printed (the left and right rows must
+     visibly turn in different directions).
+  3. reveals.png: 4 doorway-reveal or room-entry moments; for each, the real next frames,
+     the Stage 4 deterministic baseline's prediction, and 4 different generator seeds,
+     to show sharpness and diversity.
+  Later, for the second half of the stage:
+  4. longrun.png: 2 closed-loop 300-frame rollouts (one with no clicks, one with scripted
+     clicks), a frame every 20 steps, for judging drift, color and stability.
+  5. At least 2 short animated GIFs (or equivalent that opens easily) of closed-loop
+     rollouts, if you can produce them with libraries already installed or pip-installable.
+Do not judge these yourself; tell the user where they are and what to look for.
+
+--------------------------------------------------------------------------------
+7. VERIFICATION (this is the whole list; do not add to it)
+--------------------------------------------------------------------------------
+ 1. Existing tests: Stage 3 and Stage 4 tests still pass.
+ 2. New unit tests (small): the warp/resampling operation (identity, known shift, sub-pixel
+    accumulation behavior), the click-history feature derivation (hold-last, DeltaActionX,
+    debounce semantics in the player), the mirror augmentation transform (image flipped,
+    actionX and DeltaActionX negated, readout targets sign-flipped), and the new harness
+    metric functions.
+ 3. Data hygiene: model selection used val only; the test split was evaluated once;
+    training windows exclude viewUnsafe frames; no sidecar field is used by the
+    model at inference.
+ 4. Reproducibility: seeded runs; the final checkpoint's headline gate numbers can be
+    reproduced by one documented command.
+ 5. No-oracle test (N1/N2): a test or script that asserts the inference-time model
+    entry point accepts only frames and click-derived signals, and that the closed-loop
+    driver and the player never read the sidecar or the engine.
+ 6. The gates G1-G4 results reported as specified.
+Everything visual is judged by the user. Not requested, so do not do them: broad
+hyperparameter sweeps, other model families beyond what the fallbacks name, a pretrained
+backbone, anything in /engine, new bulk data, the "dreamlike" features (texture/prop
+injection, biome blending, undefined spaces; those are a later stage).
+
+--------------------------------------------------------------------------------
+8. DELIVERABLES AND DEFINITION OF DONE
+--------------------------------------------------------------------------------
+  [ ] The final model code, training scripts and configs, saved checkpoints for the
+      final 96x72 model (and the 64x48 development model), all resumable and documented
+  [ ] The extended evaluation harness with the one-command gate runner (Section 4)
+  [ ] The interactive player and its scripted headless mode (Milestone 5), or a clear
+      statement that G4 was not met and why
+  [ ] The review artifacts of Section 6
+  [ ] neural/docs/STAGE5-REPORT.md: technical, written for a reader who has not seen this
+      conversation (the user will have it translated). It must contain: the architecture
+      and the design reasons (including how steering is carried and why the generator
+      cannot override it); the training recipe and data sampling; the results of Gates
+      G1-G4 on val and the final test numbers, with seed variance; how G1 evolved and
+      what the fallbacks did; the long-horizon stability tracks and failure modes with
+      evidence; the speed, resource and sparsity measurements and the hardware analysis
+      of Milestone 4; GPU hours used per milestone; shortcuts taken; changes made to
+      Stage 3/4 code (including the __reduce__ loader fix) and any .gitignore edits; the
+      list of changed and added files for the user's manual commit; and a "needs user
+      decision" list including suggestions for the next stage (more data, longer context,
+      the dreamlike features, ablation datasets of different bot mixtures)
+  [ ] neural/README.md updated: how to run the player, the harness and the gates
+  [ ] A short entry at the top of CHANGES-LOG.md in the existing format
+  [ ] STAGE5-PROGRESS.md left up to date
+  [ ] You have not touched git, the engine, the pilot, or bulk_v1
+Then stop and tell the user: where the artifacts are and what to look for; how to launch
+the player; and the headline numbers of the four gates.

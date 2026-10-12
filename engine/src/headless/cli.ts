@@ -151,7 +151,7 @@ function printUsage(): void {
       '    --make-plan <name>   write a plan JSON at <output>/<name>.plan.json and exit',
       '    --plan <path>        load a plan JSON and run it (resumable)',
       '    --train/--val/--test <n>  per-split episode counts (for --make-plan)',
-      '    --profile <name>     mixture profile: mixture | uniformOnly | doorAwareOnly',
+      `    --profile <name>     mixture profile: ${Object.keys(CONFIG.mixtureProfiles).join(' | ')}`,
       '    --name <name>        plan name (default: pilot)',
       '',
       '  Legacy single-split mode (no --make-plan/--plan):',

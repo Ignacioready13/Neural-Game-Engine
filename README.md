@@ -158,7 +158,13 @@ generator seeded from the episode seed but **separate** from the world generator
 
 Seven personas — `idle` (no clicks), `decisive`, `late`, `dither`, `prober`,
 `spammer`, `uniform` — are mixed per ~100–300-frame segment under a named
-profile. Profiles: `mixture` (default), `uniformOnly`, `doorAwareOnly`. The
+profile. Profiles: `mixture` (default, the Stage-2 pilot), `uniformOnly`,
+`doorAwareOnly`, and `mixture_v2` (the Stage-4B bulk profile — weights tuned
+toward `dither`/`spammer` for more two-door counterfactual contexts while keeping
+every persona and the never-clicked/stale-held regimes; see
+[`neural/docs/STAGE4B-REPORT.md`](neural/docs/STAGE4B-REPORT.md)). The
+`mixture`/`uniformOnly`/`doorAwareOnly` weights are never edited, so the pilot
+stays reproducible. The
 active persona per step is logged in the manifest. Full semantics and weights
 are in `engine/docs/DATASET-SCHEMA.md` §9 and `engine/config/config.ts`.
 
@@ -187,6 +193,19 @@ frames stay on disk and in the manifest. A training loader should **drop any
 window that touches a flagged frame** (including its action target frame). The
 share of flagged frames/episodes is reported in `report.md` §11. Details in
 `engine/docs/DATASET-SCHEMA.md` §5b.
+
+### Datasets
+
+- **`engine/data/pilot_v1/`** — the Stage-2 pilot: 150 episodes (120/15/15),
+  600 frames each, `mixture` profile. 88,047 frames; 3.3 % abort.
+- **`engine/data/bulk_v1/`** — the Stage-4B bulk training set: 1,500 episodes
+  (1,100/200/200), 600 frames each, **`mixture_v2`** profile. 1,445 complete +
+  55 aborted (3.67 %), 876,261 frames; packed at 96×72 and 64×48 under
+  `neural/data/`. See [`neural/docs/STAGE4B-REPORT.md`](neural/docs/STAGE4B-REPORT.md)
+  for coverage numbers.
+
+The `engine/data/` subtree is gitignored (data is regenerated, not committed); the
+plan JSON for each dataset lives beside it and is copied into the dataset dir.
 
 ### GPU acceleration
 

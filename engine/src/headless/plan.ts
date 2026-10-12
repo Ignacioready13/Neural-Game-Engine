@@ -30,6 +30,12 @@ export interface RunPlan {
   outputRoot: string;
   /** Disjoint seed ranges per split, recorded for reproducibility. */
   seedRanges: Record<Split, SeedRange>;
+  /**
+   * Minimum number of finished episodes before the abort-share early stop may
+   * fire (default 100). Guards against stopping on a noisy small sample; the
+   * stop threshold itself (CLIP_STOP_SHARE) is unchanged.
+   */
+  clipStopMinEpisodes?: number;
   episodes: PlanEpisode[];
 }
 

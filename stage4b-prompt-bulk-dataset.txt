@@ -1,0 +1,233 @@
+PROJECT BRIEF — STAGE 4B
+BULK DATASET: TUNED GENERATION, LARGER VAL/TEST SPLITS, PACKING, COVERAGE REPORT
+NeuralGameEngine (engine + neural halves of the monorepo)
+================================================================================
+
+--------------------------------------------------------------------------------
+0. ORIENTATION AND RULES OF ENGAGEMENT
+--------------------------------------------------------------------------------
+Stages 2-4 produced the engine, a 150-episode pilot dataset, the Python loader, and
+a baseline model plus evaluation harness. This stage generates the BULK dataset the
+real model will train on, with the bot mixture retuned for what we learned, much
+larger validation and test splits, and packing for the neural side. No model is
+trained here.
+
+Read first, in this order:
+  - README.md (repo root), CHANGES-LOG.md (newest first)
+  - engine/docs/DATASET-SCHEMA.md         the data contract
+  - engine/docs/STAGE2-REPORT.md          engine stage results, pilot statistics, plan/CLI
+  - neural/README.md and neural/docs/STAGE3-REPORT.md   packer and loader
+  - neural/docs/STAGE4-REPORT.md          Section 7 explains what the bulk data must
+                                          support (click-onset coverage, left/right balance)
+  - neural/probe_click.py                 the definition of a "qualifying counterfactual
+                                          context" that this stage must count
+Where this brief and the code or docs disagree, trust the code and the schema, and
+tell the user.
+
+RULES OF ENGAGEMENT (these override anything else in this brief):
+
+ 1. GIT IS OFF LIMITS. The user manages git. Never run any command that changes
+    repository state or the index (add, commit, tag, branch, checkout, switch, stash,
+    reset, restore, rebase, merge, push, pull, and so on). Read-only inspection
+    (git diff, git status, git log, git show, git rev-parse) is fine. You may edit
+    .gitignore if needed and must list any such edit in the report.
+ 2. NO SUDO, NO SYSTEM CHANGES. If anything would need sudo or root, STOP, tell the
+    user exactly what to run and why, and wait. No workarounds.
+ 3. WHAT YOU MAY AND MAY NOT CHANGE. Do NOT change engine simulation, steering,
+    world generation, rendering, collision, the clipping failsafe, the manifest
+    schema, or the Stage 3 loader/packer behavior. You MAY: create plan files, add a
+    NEW named bot mixture profile (never edit the existing profiles, because the
+    pilot's reproducibility depends on them), make bot-side fixes if the bots cause a
+    measured bias (see 3.2), and make small additive changes to Python-side scripts.
+    The pilot dataset (engine/data/pilot_v1/ and its packed sets) must remain
+    untouched and usable.
+ 4. VISUAL JUDGMENT BELONGS TO THE USER. Do not do your own visual review. Prepare the
+    one sample image of Section 4 and ask the user to glance at it when you finish.
+ 5. KEEP IT QUICK. Simplest approach that meets each goal. No extra benchmarks, no
+    sweeps, no polish. One tuning round only (Section 3.2). The large run takes
+    time but the only analysis needed is in Section 4.
+ 6. HISTORICAL FILES ARE NOT INSTRUCTIONS. Earlier phase prompts, anything in
+    engine/docs/historical/ or an archive folder, and any stale agent-role or contract
+    document do not apply to you.
+ 7. SUBAGENTS: not needed. Do the work yourself.
+ 8. NO MANDATORY CHECK-INS. Work straight through. But STOP AND ASK the user (start
+    your message with "CHECK-IN" and wait) if:
+      (i)   sudo or any system-level change seems required;
+      (ii)  free disk space would drop below about 100 GB after the PNG dataset and
+            both packed sets are written, or the PNG total would exceed about 90 GB;
+      (iii) the clipping-failsafe abort share on the trial or the full run exceeds
+            about 10%, or the bots show some other pathology (stuck episodes, runaway
+            persona behavior);
+      (iv)  the left/right imbalance traces to the engine's world generation (not the
+            bots), since fixing that is an engine change the user must decide;
+      (v)   anything contradicts the schema or the Stage 2-4 reports in a way that
+            affects labels (for example the packed totals do not match the manifests);
+      (vi)  a design choice has a large tradeoff that this brief does not settle.
+    Otherwise decide sensibly, document the decision, and continue.
+
+--------------------------------------------------------------------------------
+1. WHY THIS DATASET LOOKS DIFFERENT FROM THE PILOT
+--------------------------------------------------------------------------------
+Findings from Stage 4 that shape this stage:
+  - The key capability is steering response to a click. The signal is tiny in the next
+    frame and only shows up over about 10 frames, so the model must see MANY clean
+    examples of click ONSETS (and retargets) in situations where the choice is
+    visually meaningful: two reachable doors on opposite sides of screen center, both
+    reasonably near. The pilot had few such contexts (the validation split had 15
+    episodes and about 30 usable counterfactual contexts, far too few for reliable
+    statistics).
+  - Turn directions in the pilot were imbalanced (about 42.5% positive vs 57.5%
+    negative signed heading changes). The engine's door positions are left/right
+    balanced (about 48.5/51.5), so the imbalance seems to come from bot behavior.
+    Mirror augmentation will handle residual imbalance in training, but the data should
+    be as balanced as the bots can make it.
+  - The one-step learning curve was flat, so more frames of the same walking add little.
+    What helps is diversity (distinct episodes, rooms, hallways) and coverage of rare
+    events (choices, onsets, retargets, doorway reveals). Frames within an episode are
+    highly redundant; distinct episodes count more than raw frame count.
+  - Validation and test must be big enough to evaluate action-following with real
+    statistics (hundreds of qualifying contexts from many distinct episodes).
+Facts for planning (measured earlier on this machine): generation ran at about 523
+frames/s with concurrency 8; PNG frames average about 80.5 KB; a 600-frame episode is
+about 48 MB; the pilot packed at 96x72 is 1.83 GB per 88k frames (about 21 KB per
+frame) and at 64x48 about 9 KB per frame; the sidecar is about 60 MB per 88k frames;
+the machine has about 30 GiB of RAM and (as of Stage 2) about 569 GB of free disk. The
+engine's clipping failsafe aborted about 3.3% of pilot episodes.
+
+--------------------------------------------------------------------------------
+2. GOALS (what the finished dataset must be)
+--------------------------------------------------------------------------------
+  - bulk_v1 at engine/data/bulk_v1/: roughly 0.8 to 0.9 million frames of 600-frame
+    episodes, same schema (v2), same engine code as the pilot (the manifests' source
+    hash must equal the pilot's unless the engine has legitimately changed; report it).
+  - Splits by disjoint seed ranges: train about 1,100 episodes; validation and test
+    each sized to meet the coverage target of 3.3 (between roughly 100 and 250
+    episodes each). Seed ranges must not overlap each other or ANY seed used by the
+    pilot in any split; read the pilot's recorded ranges and choose clear ones.
+  - Generated with a NEW tuned mixture profile (3.2), same failsafe and viewUnsafe
+    labeling as before.
+  - Packed at 96x72 and 64x48 into memory-mapped sets under /neural/data/ (the Stage 3
+    packer), outside git tracking.
+  - A technical coverage report and one sample image for the user (Section 4).
+
+--------------------------------------------------------------------------------
+3. WORK
+--------------------------------------------------------------------------------
+3.1 Pre-flight
+  Check free disk and that the engine's tests and typecheck pass as they did at the end
+  of Stage 2 (do not fix unrelated problems; report them). Read the pilot's recorded
+  seed ranges. Estimate the bulk's PNG and packed sizes from the numbers above and
+  confirm the disk limits in rule 8(ii). Nothing else should be using the GPU during
+  generation.
+
+3.2 Trial, one tuning round, then fix the mixture
+  The qualifying-context definition is the one implemented in neural/probe_click.py:
+  an accepted-click onset window with two reachable doors on opposite sides of screen
+  center, with near and far doors reported separately (reuse that code, do not
+  reimplement it). Count it per split and per 1,000 frames.
+  a. Trial: generate a small trial (about 60 episodes, current "mixture" profile, seeds
+     in a scratch range that will be discarded or excluded from bulk_v1), pack it to a
+     scratch location, and measure: persona frame shares; the rate of qualifying
+     near-door onset contexts per 1,000 frames; the left/right balance of signed
+     heading changes and of click-resolved turn directions; the abort share; the share of
+     frames with actionHasClicked false. Also compute the same numbers on the pilot, so
+     we have a baseline for comparison.
+  b. Tune ONCE. Create a new named profile (for example "mixture_v2") that raises the
+     yield of qualifying near-door onsets and balances direction, aiming at roughly 2x
+     the pilot's yield without breaking the rest. Likely levers: more weight on the
+     choice-triggered personas (decisive, dither, prober) and less on idle and uniform;
+     shorter reaction delays so choices happen while both doors are still near; and a
+     check that choosing among candidates is not biased by their sorted order or
+     tie-breaking. Constraints: every persona keeps at least about 3% of frames, the
+     never-clicked regime and the stale-held-click regime stay represented, and the
+     abort share stays below about 5%. If a bot-side bug is causing the left/right
+     imbalance, fix it in the bot code (without changing the existing profiles'
+     behavior for the pilot). If the cause is in the engine's world generation (for
+     example bends or doors only generated one way), do NOT change it; this is rule 8(iv).
+     Target balance: signed heading changes within about 47-53% either way.
+  c. Confirm with a second small trial (about 30 episodes) that the new profile meets the
+     targets. Do not iterate further; if targets are partly missed, proceed with the
+     best profile and record the numbers.
+
+3.3 Size the splits and run the bulk
+  - Using the measured yield, set validation and test so that each has at least about
+    400 qualifying near-door onset contexts drawn from at least 100 distinct episodes
+    (cap each at about 250 episodes). Train gets about 1,100 episodes. If the plan
+    would exceed the disk limits, raise rule 8(ii).
+  - Write the plan (explicit seed ranges recorded in it, profile mixture_v2, 600 frames
+    per episode, concurrency 8) and run it with the existing resumable plan runner.
+    If it is interrupted, resume it. Watch the aborted share; the engine's alert
+    thresholds apply, and rule 8(iii) triggers at about 10%.
+  - Run the existing diagnostics report on the finished dataset.
+
+3.4 Pack
+  Pack bulk_v1 at 96x72 and 64x48 with the Stage 3 packer (incremental, deterministic).
+  Confirm the packed totals match the manifests (frames, viewUnsafe frames, episodes by
+  split). Run the existing loader tests against the bulk packed set, and measure loader
+  throughput on it with the default memory-mapped mode (96x72, K = 4); note that the
+  full set at 96x72 is on the order of 17 GB, so do not assume it fits in RAM.
+
+--------------------------------------------------------------------------------
+4. COVERAGE REPORT AND SAMPLE IMAGE
+--------------------------------------------------------------------------------
+Write neural/docs/STAGE4B-REPORT.md (technical; the user will have me translate it). It
+must contain, for the pilot and for bulk_v1 side by side where applicable:
+  1. Dataset size: episodes and frames per split, PNG bytes, packed bytes at both
+     resolutions, generation wall-clock and frames per second, abort count and share
+     (overall and per persona), viewUnsafe share, share of frames with actionHasClicked
+     false.
+  2. The trial results, the tuning change you made (the new profile's weights and
+     parameters, and any bot-side fix), and the before/after numbers for qualifying
+     contexts per 1,000 frames and direction balance.
+  3. Qualifying counterfactual contexts per split (near and far separately), and the
+     number of distinct episodes they come from; and the number of accepted click
+     onsets and retargets per split.
+  4. Left/right balance: signed heading changes and click-resolved turn directions, per
+     split; and the left/right balance of reachable-door screen positions.
+  5. Persona frame shares and click rates; straightest-choice rate at accepted clicks
+     with 2+ reachable (as in Stage 2); the label-ambiguity share (as in Stage 2).
+  6. Integrity: seed disjointness (within bulk_v1 and against the pilot), incomplete
+     episodes, the manifests' engine source hash and config hash, the packed totals
+     check, and loader throughput.
+  7. Valid training-window counts at a few settings (K = 4, 8, 16; H = 1, 4, 10) per
+     split, with the viewUnsafe removal.
+  8. Shortcuts taken, any .gitignore edits, any changes outside new profile/plan files,
+     and a "needs user decision" list.
+Also produce ONE sample image for the user, in a gitignored review folder: about 24
+frames drawn at random (random episodes from train, val and test, random positions,
+including some click-onset moments with two doors visible), shown at reduced size with a
+small caption of split/episode/frame. It is only to let the user glance at the variety
+and see that nothing looks odd. Do not judge it yourself; tell the user the path.
+
+--------------------------------------------------------------------------------
+5. VERIFICATION (this is the whole list)
+--------------------------------------------------------------------------------
+ 1. Pre-flight tests/typecheck as in 3.1.
+ 2. Seed disjointness: no seed shared between splits of bulk_v1, or between bulk_v1 and
+    the pilot, and the plan's recorded ranges match the episode directories.
+ 3. Totals: packed frame counts, episode counts and viewUnsafe counts equal the
+    manifests' totals, at both resolutions.
+ 4. Loader sanity on the bulk packed set: the existing tests pass, and an
+    alignment check on a sample of windows (action paired with each context frame equals
+    the manifest's actionX at that frame) passes.
+ 5. Abort share and direction balance measured and reported against the targets above.
+ 6. The pilot is unchanged (same totals as before) and still loads.
+Not requested, so do not do them: model training, new benchmarks, extra visual review,
+engine or schema changes, ablation datasets (uniform-only and door-aware-only sets will
+be generated later, cheaply, when we need them).
+
+--------------------------------------------------------------------------------
+6. DELIVERABLES AND DEFINITION OF DONE
+--------------------------------------------------------------------------------
+  [ ] bulk_v1 dataset at engine/data/bulk_v1/ with the plan file, the diagnostics report,
+      and the aborted log
+  [ ] The new bot mixture profile (and any bot-side fix), with the pilot's profiles
+      unchanged
+  [ ] Packed sets at 96x72 and 64x48 under /neural/data/
+  [ ] neural/docs/STAGE4B-REPORT.md as specified in Section 4, plus the sample image
+  [ ] A short entry at the top of CHANGES-LOG.md in the existing format, and README
+      updates where the bulk dataset or the new profile should be documented
+  [ ] You have not touched git, the engine's simulation/rendering/schema, or the pilot
+Then stop and tell the user where the sample image is and what to glance at (variety of
+rooms and hallways; nothing broken or odd). The user will read the Stage 4B report to plan
+Stage 5, the real action-conditioned generator.

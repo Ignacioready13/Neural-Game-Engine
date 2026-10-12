@@ -104,6 +104,7 @@ class PackedDataset:
             os.path.join(self.path, "labels.bin"), mode="r", dtype=self.label_dtype,
             shape=(n,),
         )
+        self._in_memory = bool(in_memory)
         if in_memory:
             # Load the packed arrays into RAM (fits for the pilot; ~1.8 GB at 96x72).
             self.images = np.asarray(self.images)
@@ -111,6 +112,17 @@ class PackedDataset:
         self.episode_by_id = {e["episode_id"]: e for e in self.episodes}
         self.episodes_by_split = {s: [e for e in self.episodes if e["split"] == s]
                                   for s in SPLITS}
+
+    def __reduce__(self):
+        """Make the set safe to hand to DataLoader workers.
+
+        ``np.memmap`` pickles by copying its whole backing file, so passing a
+        ``PackedDataset`` to a worker (as ``forkserver``/``spawn`` start methods
+        do) would copy all of ``images.bin`` into every worker — 18 GB at 96x72,
+        which OOMs the machine. Reconstruct from the path instead, so each worker
+        re-opens the memmap (the ``fork`` start method inherits it, but this keeps
+        every start method safe)."""
+        return (self.__class__, (self.path, self._in_memory))
 
     # -- low-level access --------------------------------------------------- #
 

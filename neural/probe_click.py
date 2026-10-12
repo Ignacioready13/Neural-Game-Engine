@@ -39,8 +39,8 @@ _DOOR_NEAR = 2.0       # world units: both doors must be this close to be "visib
 _NEAR_SPLIT = 0.5      # world units: near/far breakdown threshold
 
 
-def _select_contexts(packed, sidecar, K, H, max_per_ep=2):
-    ep, start = packed.enumerate_windows("val", K, H, require_safe=True)
+def _select_contexts(packed, sidecar, K, H, max_per_ep=2, split="val"):
+    ep, start = packed.enumerate_windows(split, K, H, require_safe=True)
     seen = {}
     out = []
     for e, s in zip(ep.tolist(), start.tolist()):

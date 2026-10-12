@@ -1,6 +1,7 @@
 """Loader verification: alignment (item 2), rules (item 3), throughput + smoke (item 7)."""
 
 import json
+import os
 import time
 
 import numpy as np
@@ -103,11 +104,15 @@ def test_rules(packed96, src):
 # --------------------------------------------------------------------------- #
 
 def test_throughput(packed96):
-    # Keep the split in RAM (fits; ~1.8 GB at 96x72) — the documented fast path.
+    # The pilot's fast path keeps the (1.8 GB) split in RAM. A larger set (the
+    # Stage 4B bulk at 96x72 is ~18 GB) does not fit, so an env knob lets the same
+    # test measure the default memory-mapped mode; the default is unchanged.
     # Windows are tiny, so DataLoader worker IPC overhead dominates and
     # num_workers=0 is fastest here; measured and reported in the report.
     K = 4
-    d = PackedDataset(packed96.path, in_memory=True)
+    in_memory = os.environ.get("LNE_THROUGHPUT_IN_MEMORY", "1") == "1"
+    mode = "in-memory" if in_memory else "memory-mapped"
+    d = PackedDataset(packed96.path, in_memory=in_memory)
     ds = WindowDataset(d, "train", K=K, H=1, normalize=True)
     loader = DataLoader(ds, batch_size=64, num_workers=0, shuffle=False)
     t0 = time.time()
@@ -118,8 +123,11 @@ def test_throughput(packed96):
             break
     dt = time.time() - t0
     wps = count / dt
-    print(f"\nthroughput: {wps:.0f} windows/s (K={K}, 96x72, in-memory, 1 process)")
-    assert wps > 3000, f"loader too slow: {wps:.0f} windows/s"
+    print(f"\nthroughput: {wps:.0f} windows/s (K={K}, 96x72, {mode}, 1 process)")
+    # In-memory keeps the pilot's floor; memory-mapped (an 18 GB set read from
+    # disk in one process) is far slower, so it gets its own, honest floor.
+    floor = float(os.environ.get("LNE_THROUGHPUT_MIN", "3000" if in_memory else "100"))
+    assert wps > floor, f"loader too slow: {wps:.0f} windows/s (floor {floor:.0f})"
 
 
 def test_smoke_train(packed96):
