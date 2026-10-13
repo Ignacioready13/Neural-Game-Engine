@@ -6,6 +6,137 @@ compact, fast-to-read training arrays and serves training windows to a model. It
 is fully independent of `/engine`; it only *reads* the engine's dataset and never
 calls back into it.
 
+---
+
+## How to play and compare models (the player)
+
+`play.py` is the real-time thin client: it runs **one registered model** at the
+training rate (20 Hz) in a window, applies the engine's click semantics, and draws the
+engine's click pulse. It never touches the engine, the sidecar or door information —
+at play time the model sees only its own recent generated frames plus the click
+signals, after a real K-frame seed context (N1/N2). Each run starts from a real
+early-episode clip taken from the cached seed contexts (`models/seeds.npz`), so the
+18 GB packed set does not have to be mounted to play.
+
+```bash
+cd neural
+
+./play.sh                            # newest selected model (currently flow96c), windowed
+./play.sh --model flow96             # pick a model by its internal run name
+./play.sh --model flow96d            # a candidate that was NOT selected (see below)
+./play.sh --list-models              # what is registered, which are selected
+./play.sh --model flow96c --fullscreen
+./play.sh --help                     # every flag with its meaning and default
+```
+
+**Models are named after their internal training run** — `flow96`, `flow96c`,
+`flow96e`, … — which is the name the player shows. The Stage 5-era letters survive only
+as aliases (`5a` = `flow96`, `5b` = `flow96c`), so older commands still work.
+
+`play.sh` runs the player under `memcap.sh` (a hard memory cap, so a runaway job can
+only kill itself, never the editor). Add `--no-memcap` as the first argument to skip
+that wrapper.
+
+### Keys
+
+| key | what it does |
+|---|---|
+| left click | steer: the click's X sets the held signal (clamped to the image, not the window). Every click draws the engine's pulse; a click within 150 ms (3 frames) of the last *accepted* click is ignored for the signal but still shows its pulse. |
+| `F11` / `alt+enter` | fullscreen on/off |
+| `Esc` | leave fullscreen (then quit if already windowed) |
+| `M` / `shift+M` | next / previous **selected** model — restarts from the **same** seed context and noise seed (and the same recorded clicks if a replay is running), so the only thing that changed is the model. (If you started on a non-selected model, `M` joins the selected cycle at its first entry.) |
+| `R` | restart with a new random seed context and noise seed |
+| `shift+R` | restart with the *identical* seed context and noise seed (an exact rerun) |
+| `space` | pause / resume |
+| `.` or `→` | single step (pauses first) |
+| `Tab` | compact HUD on/off (`H`/`F1` shows the full help overlay) |
+| `T` | nearest (integer) / smooth scaling |
+| `S` / `F2` | screenshot to `review/stage6/` |
+| `C` | start/stop recording the session's clicks for replay |
+| `V` | start/stop recording the display to a GIF in `review/stage6/` |
+| `P` | print a one-line status (model, fps, held X, seed, dropped steps) |
+| `Q` | quit |
+
+### Registered models
+
+`models/registry.json` is the registry; each name freezes a copy of its generator
+checkpoint under `models/<name>/generator.pt`, so a later training run that reuses
+`runs/<name>/` cannot change what the name means.
+
+| name (internal) | alias | generator | selected | notes |
+|---|---|---|---|---|
+| `flow96` | `5a` | `runs/flow96/best.pt` | yes | the Stage 5 model (`v0` in the Stage 5b scorecard) |
+| `flow96c` | `5b` | `runs/flow96c/best.pt` | yes | **default**: the Stage 5b overnight winner |
+| `flow96d` | — | `runs/flow96d/best.pt` | no | rejected by the frozen scorecard; excluded from the `M` cycle, still playable with `--model flow96d` |
+
+**"Selected"** means the model passed the project's selection step: the frozen
+scorecard's `keep` verdict in `eval_out/decision_*.json` (and `winner` in
+`docs/ENERGY-LEDGER.json`). Only those are in the `M` cycle and eligible as the default.
+Registered-but-unselected models, and even a `runs/<name>/best.pt` that was never
+registered, are still playable by naming them — so you can inspect any candidate by hand
+without promoting it:
+
+```bash
+./play.sh --model flow96d      # registered, not selected
+./play.sh --model flow96e      # not registered: loads runs/flow96e/best.pt directly
+```
+
+Add the next revision (reads the training run, copies the checkpoint, prints the play
+command):
+
+```bash
+.venv/bin/python register_model.py --run flow96e \
+    --core runs/steer96/best.pt --description "flow96e: longer self-rollout" \
+    --parent flow96c
+./play.sh --model flow96e
+```
+
+### Recording and comparing two models
+
+Press `C` while playing (or pass `--record FILE`) to record the model, seed context,
+noise seed and every click with its frame index, then replay those exact clicks on any
+model:
+
+```bash
+# replay the recording in a window on another model (live input is ignored; M switches
+# the model mid-replay to see both on the same clicks)
+.venv/bin/python play.py --model flow96 --replay models/recordings/flow96c_session_<stamp>.json
+
+# or headless: write a GIF for the review folder
+.venv/bin/python play.py --model flow96 --headless \
+    --replay models/recordings/flow96c_session_<stamp>.json --out review/stage6/replay_flow96.gif
+```
+
+Replaying the same recording on the same model reproduces the frames bit for bit
+(`tests/test_stage6.py` checks this); the same recording on the other model is a fair
+comparison of the two models' responses to the *same* clicks.
+
+### Scripted / headless runs and frame times
+
+```bash
+./memcap.sh --mem 12G -- .venv/bin/python play.py --model flow96c --headless \
+    --frames 400 --pace --clicks "15:0.8,60:-0.6,140:0.9" \
+    --out review/stage6/play_flow96c.gif --report-frames review/stage6/frames_flow96c.json
+```
+
+`--pace` holds the real 20 Hz rate; `--report-frames` writes mean/p95/worst frame time
+and whether any step was dropped. Run a checkpoint that is not registered with
+`--checkpoint runs/<run>/best.pt --packed data/bulk_v1_96x72`.
+
+Where things live: `models/registry.json` (registry), `models/<name>/generator.pt`
+(frozen checkpoints), `models/seeds.npz` (cached seed contexts, built by
+`build_seeds.py`), `models/recordings/` (recorded sessions), `review/stage6/`
+(screenshots, display recordings, headless GIFs). A live session also appends one row
+to `docs/ENERGY-LEDGER.json/md` on exit and prints GPU W, J per frame and Wh per hour
+of play.
+
+A review set already exists in `review/stage6/`: `demo_flow96c.gif` is a recorded
+240-frame session, and `demo_flow96.gif` / `demo_flow96d.gif` are the *same recording*
+(`models/recordings/demo_flow96c.json`) replayed on the other two models — the
+flow96-versus-flow96c comparison on identical clicks.
+
+---
+
 Stage 4 adds the first model and the reusable evaluation harness. What exists:
 
 - `packer.py` — packs a source dataset into memory-mapped arrays at a chosen
@@ -448,3 +579,53 @@ At inference the models accept only frames, click-derived signals and a seed.
 closed-loop driver works with the analysis sidecar unavailable, and
 `test_inference_models_accept_only_frames_and_clicks` pins the signatures. The sidecar
 (heading, doorway candidates) is used **only** while building training targets.
+
+---
+
+## 13. Stage 5b — the frozen scorecard, the judges, and energy accounting
+
+Stage 5's gates passed but did not capture the user's playtest complaint (in long
+closed-loop play no doorway ever appears and the walls dissolve into smears), so Stage 5b
+freezes a scorecard **before** changing the model, scores every candidate against it, and
+accounts for the energy of every run.
+
+### What the pieces are
+
+- `powerlog.py` — the energy logger. Samples GPU power (NVML) and CPU package power
+  (Intel RAPL) at ~1 Hz in a daemon thread, integrates with the trapezoid rule to Wh, and
+  appends one record per run to `docs/ENERGY-LEDGER.json` / `.md` with the command line,
+  purpose, mean/peak W, temperatures, throttle events and `parent_run` so a model's
+  lineage is traceable. Wraps any command:
+  `./memcap.sh --mem 15G -- .venv/bin/python powerlog.py --run-id X --purpose train -- <cmd>`,
+  and `docs/ENERGY-LEDGER.md` carries the idle baseline, the measured totals, the
+  lineage and (separately, labelled) the estimate for pre-logger runs.
+- `judges.py` — evaluation-only judges; **nothing in the inference path imports it**
+  (asserted by a test). The opening detector is trained on real frames only, with labels
+  derived from the sidecar's doorway candidates ("a *reachable* candidate with
+  `screenDistance ≤ 0.35` and `|screenX| ≤ 0.35`"), per-frame instance normalisation so
+  darkness is not a shortcut, oversampled no-door controls, and a threshold calibrated on
+  real frames. Also the real-vs-generated classifier, the radial power spectrum,
+  multi-scale gradients and the long-run health statistics.
+- `scorecard.py` — one frozen evaluation set (`eval_sets/scorecard_v1.json`, never
+  rewritten in place) and one command per candidate: 40 val clips × {no click, the clip's
+  real clicks, a scripted left/right pattern} × 3 seeds × 300 closed-loop steps, plus the
+  frozen Gate-G1 steering contexts, the reveal one-step test, and the confirmation/test
+  runs. Rollouts execute batched, which is 4x faster and bit-identical to the
+  single-rollout path at batch 1.
+- `score_table.py` — the pre-declared keep/revert rule, applied against the incumbent's
+  **measured seed-to-seed noise** (the record keeps both the main reading and the stricter
+  "every horizon individually beyond noise" one).
+- `diagnose_stage5b.py`, `review_stage5b.py`, `night_queue.sh` — the diagnosis, the
+  review images (large, tightly cropped) and the ordered night plan.
+
+### Where the two stages disagree, and why it matters
+
+Stage 5b's diagnosis measured that real frame-to-frame motion is a **pure 0.89 px/step
+translation** (adding a zoom term reduces the one-step residual by 0.08 %), so the
+translation-only warp was right and the generator's job is to invent the thin revealed
+strip. The frozen detector then showed the incumbent displaying a walkable opening in
+12.5 % of its 300-step frames against 52.5 % of real. A 3.19 M-parameter denoiser with
+global attention and a longer self-rollout curriculum fixed most of that (1.015x real on a
+disjoint confirmation set); an edge-weighted loss that improved the training loss and
+every one-step metric made the 300-step number **0.000**, and was rejected. Freeze the
+long-horizon scorecard first.

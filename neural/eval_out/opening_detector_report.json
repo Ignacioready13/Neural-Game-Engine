@@ -1,0 +1,21 @@
+{
+ "instance_norm": true,
+ "open_t": 0.35,
+ "width": 16,
+ "train_pos": 6000,
+ "train_neg": 6000,
+ "train_control": 513,
+ "steps": 900,
+ "val_pos_rate": 0.562,
+ "val_neg_rate": 0.366,
+ "val_precision": 0.6056034482758621,
+ "val_recall": 0.562,
+ "no_door_controls": 400,
+ "no_door_control_rate": 0.1025,
+ "dark_control_n": 100,
+ "dark_control_rate": 0.17,
+ "val_positive_share": 0.5756228367773552,
+ "val_control_share": 0.04107124498817724,
+ "calibrated_thresh": 0.4494689106941223,
+ "calibrated_pos_rate_real": 0.5755
+}

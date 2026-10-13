@@ -1,0 +1,386 @@
+PROJECT BRIEF — STAGE 5C (OVERNIGHT RUN)
+COHERENCE FIRST: A GENERATOR THAT STAYS A HALLWAY UNDER FRESH NOISE
+NeuralGameEngine (the /neural half of the monorepo)
+================================================================================
+
+SCHEDULE (the user may edit these two lines before pasting; use whatever they say):
+  USER STOPS EVERYTHING AT:           08:00 Mountain time (MDT)
+  DEADLINE FOR ALL GPU WORK:          07:30 MDT. Every job finished, report written, machine idle.
+
+--------------------------------------------------------------------------------
+0. ORIENTATION AND RULES OF ENGAGEMENT
+--------------------------------------------------------------------------------
+Stages 2-6 gave us the engine, the datasets, the loader, a baseline, a structured
+generator (steering core + flow generator), a frozen scorecard, and a real-time
+player. The user has now judged the generators by playing them. This overnight stage
+trains a better generator, with the main goal of COHERENCE when the user is not
+clicking. The user is asleep from shortly after you start until about 08:00, so you
+must run on your own and have everything ready when they wake.
+
+Read first, in this order (skim; do not re-derive what they already say):
+  - neural/docs/STAGE6-REPORT.md          the real-time player (play.py, play.sh, registry)
+  - neural/docs/STAGE5B-REPORT.md         the overnight before this one, incl. §12
+  - neural/docs/STAGE5-REPORT.md          the generator design (steering core + flow model)
+  - neural/README.md, CHANGES-LOG.md      how to run things; history
+  - neural/docs/STAGE5-PROGRESS.md        the style of progress file used before
+The GameNGen paper (Valevski et al., "Diffusion Models Are Real-Time Game Engines",
+ICLR 2025; arXiv 2408.14837) is the closest published method; Section 2.2 below
+summarizes what matters from it.
+
+RULES OF ENGAGEMENT (these override anything else in this brief):
+
+ 1. GIT IS OFF LIMITS. The user manages git. Never run any command that changes
+    repository state or the index. Read-only inspection (git diff, status, log, show,
+    rev-parse) is fine. You may edit .gitignore if needed and must list any edit.
+ 2. NO SUDO, NO SYSTEM CHANGES. If something needs sudo, write the exact command and
+    why at the TOP of the progress file, do everything that does not need it, and keep
+    going. No workarounds, no system edits.
+ 3. NEVER OVERWRITE ANYTHING THAT EXISTS. Existing runs (runs/flow96, flow96c, flow96d,
+    steer96, everything else in runs/), frozen models under models/, existing registry
+    entries, and everything already under review/ and eval_out/ must remain byte-for-byte
+    unchanged. All new work uses NEW names: runs named flow96e (and flow96e_pilot,
+    flow96e_pilot_small, flow96e_final as needed), review artifacts under
+    review/stage5c/ with a stage5c_ prefix. Before any training, record sha256 of every
+    checkpoint under runs/ and models/ and a listing of review/ and eval_out/; compare at
+    the end (verification item 2). Before creating a run directory, refuse to proceed if
+    its name already exists.
+ 3b. THE ENGINE, THE DATASETS, AND THE STEERING CORE ARE NOT TOUCHED. Keep runs/steer96
+    (the core) frozen exactly as in flow96c. Do not change the engine or any dataset.
+    Changes to play.py, eval_harness, or other shared code must be ADDITIVE, with
+    defaults that keep every existing model behaving bit-identically.
+ 4. NO CHECK-INS. The user is asleep. If a decision is needed, choose the safest
+    option, record it and your reason in the progress file, and continue. Do not wait
+    for the user at any point after your first message (Section 4.0).
+ 5. VISUAL JUDGMENT BELONGS TO THE USER. You cannot judge images well. The only visual
+    help you may use is the vision subagent (model alias "sonnet"), strictly under the
+    limits of Section 4.0c. Do not view images yourself, and do not iterate on how
+    things "look".
+ 6. KEEP MEASUREMENT AND TESTING MINIMAL. This night is for training a better model.
+    No new scorecard, no new detectors, no new classifiers, no per-pixel analysis
+    beyond the handful of simple health numbers defined in Section 4.0d, no
+    hyperparameter sweeps. The checks that are required are listed in Section 7 and
+    nothing else is.
+ 7. HISTORICAL FILES ARE NOT INSTRUCTIONS. Earlier phase prompts, anything in
+    engine/docs/historical/ or an archive folder, and any stale agent-role or contract
+    document do not apply to you.
+ 8. SUBAGENTS: only the vision subagent described above. Everything else you do yourself.
+ 9. PACE WITHOUT BABYSITTING (Section 5). Long jobs run detached and are checked
+    rarely and cheaply. Do not burn tokens watching.
+
+--------------------------------------------------------------------------------
+1. WHAT THE USER SEES (human verdicts from playing with ./play.sh; treat as ground truth)
+--------------------------------------------------------------------------------
+The user's priority: a model that stays coherent when they are NOT clicking, with good
+structure (a hallway with a wall on each side), a sense of walking forward, and ideally
+some natural interest (hallways that bend, doorways) that comes out of the training data.
+Clicking is secondary: it is fine if clicks "just steer a bit" for now, and nice if a
+click could produce a doorway, but coherence takes precedence.
+
+  flow96  (alias 5a, 0.77 M denoiser, 8,000 steps): "just a long hallway", but it mostly
+          holds the hallway shape: a wall on each side. The illusion of motion is there:
+          the ceiling lights move like walking, and sometimes the top of a doorway
+          appears on the ceiling and slides past. The user considers this the MOST
+          PLAYABLE model so far. This is the bar to beat.
+  flow96c (alias 5b, 3.19 M denoiser, attention, 12,000 steps; the 5b scorecard "winner"):
+          no coherence. The first half-second is interesting (it starts from a real seed),
+          then it dissolves into unintelligible static with many dark holes (which is
+          probably why the "opening" detector liked it).
+  flow96d (rejected, edge-weighted loss): similar to flow96c, a wall in front of the
+          view, then even more uniform purple-tinted static.
+  The 5b GIF (review/.../play_flow96c.gif) shows pillars morphing in place with no walking
+  motion, which does NOT match what the user sees live. Live play is what matters.
+
+--------------------------------------------------------------------------------
+2. WHAT WE KNOW AND WHAT WE SUSPECT
+--------------------------------------------------------------------------------
+2.1 The evaluation path may not match the live path (investigate FIRST)
+  - The Stage 6 report measured, on identical clicks through the live player, the mean
+    frame-to-frame change (grey levels): flow96 5.98, flow96c 24.42, flow96d 14.92. So in
+    the player flow96c changes about 4x MORE than flow96, consistent with "static".
+  - The Stage 5b scorecard reported the opposite order for what should be the same
+    quantity ("frame change": flow96 0.0048, flow96c 0.0024, real 0.022, i.e. flow96c
+    smoother than flow96). Both cannot describe the same behavior.
+  - The player samples frame f with noise seed (noise_seed + f), i.e. FRESH noise every
+    frame. Suspicions to check in code and with a short run: the scorecard/old GIF
+    rollouts used a fixed noise tensor per rollout or per step (which gives smooth, frozen,
+    deterministic output, like pillars morphing in place); the Stage 5-era player had the
+    bugs listed in the Stage 6 report (§0 rows 2-4: repeated action instead of real
+    history, unbounded history, debounce state); different seed contexts or sampler
+    settings. The 5b "winner" was selected by a path that may not reflect live play.
+  - Consequence: from now on EVERY rollout used to make a decision must come from the
+    live player's own code path (Player.generate, headless mode), with fresh noise per
+    frame, from real seed contexts, in a no-click scenario and a real-click scenario.
+
+2.2 What the GameNGen paper contributes (read the cited sections if useful)
+  - Sec 3.2.1, Fig 4, Fig 7, Sec 5.2.2: autoregressive generation drifts and collapses
+    after 20-30 steps even when the player does not move (their Fig 4 is exactly our
+    no-click failure). Their fix, called noise augmentation and described as critical:
+    during training, corrupt the CONTEXT frames with Gaussian noise of a random level
+    drawn uniformly up to a maximum (0.7 in their latent units), discretized into 10
+    buckets, and give the model the level through a learned embedding, while the TARGET
+    stays the clean next frame. The model learns to correct imperfect past frames. At
+    inference the added level is controllable (even zero already works much better).
+    Without it, quality degrades within 10-20 steps; with it, it holds over 64+.
+    Stage 5 used only a small FIXED noise (about 0.05) with no level conditioning, which
+    is very different.
+  - Sec 3.3: classifier-free guidance applied ONLY to the frame context, weight about 1.5
+    (larger weights add artifacts that grow in autoregressive use); the context is
+    dropped with probability 0.1 in training to allow this. 4 sampling steps are enough
+    (no quality loss versus 20+).
+  - Sec 5.2.1 / Table 2: more context frames barely help (4 vs 64 frames: almost the
+    same). So do NOT spend effort on longer context or memory.
+  - Appendix A.3, Fig 13: they overfit small datasets quickly (with 1M examples,
+    test PSNR peaked near 20k steps at batch 128 then FELL; larger datasets peak later).
+    Our train set has about 0.65 M windows that are highly redundant, and 6.5 hours at
+    ~10 steps/s and batch 48 is about 11 M samples (15+ epochs). Do not assume longer is
+    always better: track validation and the live-path health numbers over time, keep
+    snapshots, and select by health, not by the last step.
+  - Sec 4.2: constant learning rate 2e-5, batch 128, gradient clipping 1.0, no weight
+    decay. They are trained teacher-forced only (no self-rollout in training).
+  - Sec 5.1: per-frame metrics against ground truth stop being informative after a few
+    autoregressive steps (trajectories legitimately diverge); they used human raters.
+    That matches our situation: the user's eyes are the judge, and our numbers are only
+    collapse detectors.
+2.3 Lessons already paid for
+  - flow96d had better validation loss, better one-step scores and a better reveal ratio,
+    and was worse where it counts. Neither validation loss nor one-step scores can select
+    models here. Selection must come from long live-path rollouts.
+  - The 5b "opening share" detector (precision 0.61) was satisfied by dark holes next to
+    yellow slabs. Do not use it. The user's eye said flow96c is incoherent.
+  - The old vertical structure of failure: the generator is not anchored to the structure
+    it was just given, and each frame injects fresh high-frequency noise; per-step effects
+    that are tiny (turns, door growth) get swamped. Noise-level-conditioned context
+    corruption is the published remedy for the drift part.
+
+--------------------------------------------------------------------------------
+3. WHAT SUCCESS LOOKS LIKE IN THE MORNING
+--------------------------------------------------------------------------------
+  - Primary: in the live player with no clicking, for a full 300+ steps, a new model
+    keeps looking like a hallway (walls both sides, floor, ceiling lights, dark far end),
+    with ongoing forward-motion cues, at least as coherent as flow96 and not
+    dissolving into static. If it ALSO produces recognizable doorways or bends, great.
+  - Secondary: clicks still steer at least about as well as flow96 does.
+  - The user decides by playing. Your numbers are only there to prevent shipping an
+    obviously collapsed model and to choose among snapshots.
+  - Whatever happens, the user's existing default and the M-cycle models are untouched,
+    so the worst case is "nothing better; here is what we learned".
+
+--------------------------------------------------------------------------------
+4. PLAN
+--------------------------------------------------------------------------------
+4.0 Phase 0: orientation and calibration (HARD CAP 60 minutes in total; GPU use is short)
+ First message: state in about 6 lines the current time (run `date`), the deadline, and
+ the schedule you will use (see 4.2 for how to compute it). Then proceed without waiting.
+ Record sha256 of existing checkpoints and listings (rule 3) right away.
+
+ 4.0a Path audit (about 20 min). By reading the code, and with ONE short headless
+   experiment, establish how noise is seeded and how history/features are built in (i) the
+   live player path (Player.generate / play.py --headless) and (ii) the scorecard and
+   review-GIF rollout paths (collect_batched, rollout_v2, the code that made
+   play_flow96c.gif). Find out whether they differ in noise seeding (fresh per frame vs
+   fixed), action/click history, seed contexts, or sampler settings, and whether that
+   explains the opposite frame-change ordering of Section 2.1. Write the finding (at most
+   10 lines) into the progress file. Then adopt the live path as the single evaluation
+   path for everything this night. Do not rebuild the scorecard.
+ 4.0b Inference-only noise correlation test (about 15 min). Using the live path on flow96
+   and flow96c, compare fresh independent noise per frame (current behavior) with
+   temporally correlated noise, noise_f = rho * noise_(f-1) + sqrt(1-rho^2) * fresh, for
+   rho in {0, 0.9, 0.99, 1.0}, no clicks, 3 seed contexts, 300 steps. Report the health
+   numbers (4.0d) per setting. This costs no training and tells us how much of the
+   incoherence is per-frame sampling noise. Add an optional additive player flag (for
+   example --noise-corr, default exactly today's behavior) only if a setting is clearly
+   better; do not change any default.
+ 4.0c Vision judge calibration (about 15 min, at most 12 image sheets in total). The
+   vision subagent ("sonnet", the vision-capable model) is the only thing that can look
+   at frames. Use it ONLY as a coarse structure detector, not a quality judge. Build
+   contact sheets (a grid of about 6 frames, steps 0, 20, 60, 120, 200, 300) from live-path
+   no-click rollouts of flow96, flow96c, flow96d (2 seed contexts each) and from real
+   frames. Ask a fixed, short, structured question per frame and ask for JSON only:
+     (a) "Is this a recognizable first-person view down a corridor, with a wall on each
+         side and a floor? answer yes, partly, or no."
+     (b) "Does it look like noise/static or melted abstract shapes? yes or no."
+   Known answers from the user: real frames: corridor yes. flow96: corridor yes (it holds
+   its shape), flow96c and flow96d after about step 100: no, static. ACCEPT the judge only
+   if it agrees with those known answers on at least 80% of the frames; otherwise DROP it
+   (record that in the progress file) and rely on the numeric health bands plus the user's
+   eyes in the morning. Allow at most two re-wordings of the question. Never use vision
+   for anything else, never on training-time images, and keep a running count; the cap for
+   the whole night is 40 sheets.
+ 4.0d Health numbers (about 10 min, CPU after the rollouts exist). Define and use ONLY
+   these on live-path no-click rollouts of 300 steps: (1) mean absolute frame-to-frame
+   change in grey levels over steps 100-300; (2) high-frequency energy (Laplacian) ratio
+   against real frames; (3) mean luminance and contrast (standard deviation) over steps
+   200-300, to catch collapse to uniform, purple, or saturated frames; (4) the share of
+   late frames that are near-black. Compute the real reference from real val clips displayed
+   the same way. Check that the numbers separate the known verdicts (flow96 healthy;
+   flow96c and flow96d not), and write the pass band you will use into the progress file. If
+   they do not separate the known cases, say so and use the vision judge or nothing.
+
+4.1 Phase 1: pilot gate (one pilot, one fallback; each about 25 minutes of training)
+ The recipe to test (call it the GameNGen-style recipe), a NEW run named flow96e_pilot:
+   - Same architecture and data as flow96c (3.19 M denoiser with low-res attention),
+     same frozen steering core, same step count (12,000) and batch, so the comparison with
+     flow96c is fair.
+   - Noise-level-conditioned context corruption as in GameNGen Sec 3.2.1: every frame-valued
+     conditioning input the generator sees (the context frames and the warped last frame)
+     is corrupted with Gaussian noise whose level is drawn per sample, uniformly from 0 up
+     to a maximum, discretized into about 10 buckets, and the bucket is given to the model
+     through a learned embedding. Start with a maximum of about 0.5 in the [-1, 1] pixel
+     scale (about one data standard deviation), with 20-30% of samples left clean. The
+     TARGET is the clean next frame. IMPORTANT pitfall: the model must not see a clean
+     answer through the corrupted input. Our generator predicts a residual relative to the
+     warped last frame; define the base the model actually sees (the corrupted warped frame)
+     and the target relative to the CLEAN truth, so the model has to learn to remove the
+     noise, not copy it. At inference use level 0 (the player must do this automatically;
+     older models must keep working bit-identically).
+   - Context dropout with probability 0.1 (a learned null conditioning), so that guidance
+     can be tried at inference (4.3). Keep the 4-step sampler.
+   - EMA of the weights (decay about 0.999 to 0.9995; use the EMA weights for all
+     evaluation and for the player), gradient clipping 1.0.
+   - Keep the self-rollout curriculum exactly as flow96c had it (self_k 4, p 0.25); do not
+     lengthen it (roll-in cost is large). Use fresh noise in any roll-in.
+   - Mirror augmentation if the existing training code already supports it; otherwise leave
+     the data handling alone.
+ GATE (use the live path, no-click, fresh noise, 3 seed contexts, 300 steps, EMA weights):
+   PASS = the health numbers of 4.0d are inside the pass band in at least 2 of 3 contexts
+   at step 300, AND (if the judge was accepted) the judge rates at least 70% of the frames
+   at steps 100+ as corridor-like. Compare with flow96 and flow96c in the same table.
+   If the pilot passes: the main run uses this recipe (4.2).
+   If it fails: run ONE fallback pilot, flow96e_pilot_small: the same recipe on the SMALL
+   denoiser size of flow96 (0.77 M, no attention), 12,000 steps, same gate. If it passes,
+   the main run uses the small architecture. If BOTH fail, the main run uses whichever was
+   healthier, with the corruption maximum raised (for example to about 0.7) and a clear
+   note in the report. Pilots must be finished by T0 + 2 h 15 min at the latest; if they
+   are running late, stop them and launch the main run anyway with the better one so far.
+ Do not train anything else in the pilot phase (no other variants, no sweeps).
+
+4.2 Phase 2: the main run (flow96e), time-budgeted, detached
+ Budget. T0 = the time you start. Main run start = the end of Phase 1. Main run end =
+ DEADLINE minus 40 minutes for Phase 3, and in any case no later than 06:50 MDT if the
+ deadline is 07:30. The user would like roughly 6-7 hours of main training if the start
+ time allows; if less time is available, use what there is. The schedule is TIME based,
+ not step based: the learning-rate decay and the final EMA checkpoint are driven by the
+ fraction of the wall-clock budget elapsed, so the run finishes on time whatever the
+ throughput turns out to be.
+ Recipe. The winning recipe from Phase 1, from scratch (do NOT warm-start from flow96c,
+ which has learned to depend on clean contexts), the same data (the full bulk train split,
+ not a subset), constant learning rate for the first 70% of the budget then a smooth decay
+ to about 5-10% of its value by the end, EMA as above, batch size as large as VRAM allows
+ (the machine is an 8 GB laptop GPU; keep the existing memcap.sh wrapper).
+ Snapshots and health, without human or token cost. Inside the training process (to avoid
+ the GPU-memory races seen before) save the EMA weights every ~40 minutes as a separate
+ snapshot file (never overwrite earlier snapshots), and at each snapshot run a SHORT
+ live-path health rollout (3 seed contexts, 200 steps, no clicks) with the EMA weights,
+ appending one line of the 4.0d numbers to runs/flow96e/health.jsonl, plus one small
+ strip image for the user to look at later (save under review/stage5c/, do not view it).
+ Also log validation loss at each snapshot. Do not do anything heavier during training.
+ Robustness. Wrap with memcap.sh and the existing powerlog.py (the energy framework is in
+ place; wrap every GPU job, including pilots, so the ledger has rows). The driver must
+ survive you: launch it detached, make it write a heartbeat/status line every ~5 minutes to
+ the progress file area, and make it run the automatic finish step (4.3, first part)
+ itself when the time budget ends, so that even if your own session ends the user wakes
+ up to a trained, registered model. If the loss goes NaN or the health collapses, the
+ driver restarts from the last good snapshot with half the learning rate (at most two
+ restarts) and records it.
+
+4.3 Phase 3: finish (about 40 minutes; the first part is automatic in the driver)
+  Automatic part: final EMA checkpoint saved; register the final model with the existing
+  register_model.py as flow96e_final, --not-selected. Do not change the registry's
+  default, the selected set, or any existing entry.
+  Your part (only if time remains; skip items that do not fit, never exceed the deadline):
+   1. Pick the model to present: among saved snapshots, the ones that pass the health band;
+      among those, if the judge was accepted, ask it about at most 3 candidates (at most 6
+      sheets each, live path, no clicks); otherwise take the latest healthy snapshot. Register
+      the pick as flow96e (--not-selected) with a description naming the snapshot, and parent
+      flow96c. If the pick is the final one, register only flow96e_final and an alias
+      flow96e pointing to it, whichever your registry makes easiest.
+   2. Context guidance (inference only, optional): with the context-dropout head, try
+      guidance weight about 1.5 on frame conditioning for the pick; report health and the
+      frame time; do not make it a default. Only if it fits the speed budget (frame time
+      must stay well inside 50 ms; the player currently uses 4-8 ms).
+   3. One steering sanity check, using the existing steering quick-check once (not the whole
+      scorecard) on flow96 and the pick: report whether clicks still steer at least about as
+      well as flow96. If it clearly regresses, say so in the report; do not try to fix it.
+   4. Speed: the player's paced headless 500-frame frame-time numbers for the pick.
+   5. Review artifacts for the user, from the live path, never overwriting anything, in
+      review/stage5c/ with the stage5c_ prefix: no-click strips (300 steps, every 20) for
+      flow96, flow96c and the pick on the same 2 seed contexts, one real-clicks strip for the
+      same three, and a display GIF of the pick with no clicks (use the player's own
+      recording/GIF feature). Do not look at them.
+   6. Leave the machine idle: no GPU jobs, no orphaned DataLoader workers.
+
+--------------------------------------------------------------------------------
+5. PACING RULES (so you do not burn tokens babysitting)
+--------------------------------------------------------------------------------
+  - After launching a long job, do not read its log continuously. Check on it at most about
+    every 45-60 minutes. Each check: print the last 10-20 lines of the status file or
+    health.jsonl, append ONE line to the progress file, and go back to waiting.
+  - Your shell tool may cap a single command (often about 10 minutes). Wait by chaining
+    plain sleeps (for example `sleep 540` repeated across calls) printing nothing. Do not
+    poll GPU stats, reread code, or analyze outputs during a wait.
+  - No image viewing and no vision calls during training. Vision is used only in Phases 0
+    and 3, within the sheet caps of 4.0c.
+  - Keep your messages short while the run is going. The progress file is the record.
+  - If something fails in a way you cannot fix quickly (more than about 15 minutes), record
+    it, fall back to the safest option (for example: pick the best model that already exists),
+    and keep the schedule. A finished, registered model at 07:30 matters more than a
+    perfect one.
+
+--------------------------------------------------------------------------------
+6. WHAT NOT TO DO
+--------------------------------------------------------------------------------
+  - No new scorecard, no frozen-set rebuild, no opening detector, no real-vs-fake
+    classifier, no spectrum/AUC tables, no new judges.
+  - No edge-weighted losses (flow96d), no I1/I3-style side experiments, no longer context
+    (GameNGen shows it barely helps), no texture or engine or dataset changes, no
+    steering-core retraining.
+  - No hyperparameter sweeps, no extra pilots beyond 4.1, no extra vision calls.
+  - Do not change which model is the player's default, the M cycle, or any existing
+    registry entry, and do not modify play.py except additively (flags whose default is
+    today's behavior).
+  - Do not spend the night analyzing; spend it training.
+
+--------------------------------------------------------------------------------
+7. VERIFICATION (this is the whole list)
+--------------------------------------------------------------------------------
+ 1. Tests: run once at the end the Stage 6 tests and the no-oracle tests (N1/N2), plus a
+    small new test that (a) the new conditioning defaults to level 0 at inference and (b)
+    older models still load and replay bit-identically through the player (the existing
+    replay round-trip test). The load-sensitive loader throughput test may be skipped; say
+    so.
+ 2. Old artifacts unchanged: compare the sha256 listings recorded at the start (runs/,
+    models/, registry.json, review/, eval_out/) with the end state; report any difference
+    (there should be none other than the new files).
+ 3. The pick loads and plays: a headless session of at least 300 frames through the real
+    player path for the pick, and `./play.sh --model <pick> --exit-after 2` under the dummy
+    video driver, both without error.
+ 4. The energy ledger has rows for every GPU job of this night (pilots, main run, finishing
+    runs), and the report quotes this night's total only.
+ 5. Health table (live path) for flow96, flow96c, flow96d and the new model(s), with the
+    judge result if accepted, in the report.
+Not requested: anything else.
+
+--------------------------------------------------------------------------------
+8. DELIVERABLES
+--------------------------------------------------------------------------------
+  [ ] Trained model(s) registered (not selected): flow96e and/or flow96e_final, playable with
+      `./play.sh --model flow96e` (give the exact commands in the report)
+  [ ] runs/flow96e/ with snapshots, health.jsonl, the training log; pilots under their own
+      names
+  [ ] review/stage5c/ artifacts as listed in 4.3 (not viewed by you)
+  [ ] neural/docs/STAGE5C-PROGRESS.md: written throughout (decisions, heartbeats, the
+      schedule, the 0a finding, calibration results, the gate result), newest information
+      easy to find at the top
+  [ ] neural/docs/STAGE5C-REPORT.md, technical and concise: the schedule actually run; the
+      0a path-audit finding and what it implies for the 5b scorecard; the 4.0b noise
+      correlation result; the judge calibration and its verdict; the pilot gate result; the
+      main run configuration, time budget, throughput, restarts if any; the health curve
+      over snapshots; the final live-path health table (flow96, flow96c, flow96d, new);
+      guidance result; steering sanity; speed; energy for this night; every decision made
+      without the user; anything unfinished or failed; and a ranked, technical list of what
+      to try next if the result is still not coherent. No claims that something "works"
+      beyond what was measured; the user decides by playing.
+  [ ] A short entry at the top of CHANGES-LOG.md in the existing format
+  [ ] Machine idle, git untouched, existing artifacts unchanged
+Finish by 07:30 MDT. If the user is awake and reading, the last lines of the progress file
+should say, in plain words, what to run first.

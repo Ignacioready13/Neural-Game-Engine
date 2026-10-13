@@ -1,0 +1,14 @@
+{
+ "forward_motion": {
+  "n_pairs": 1440,
+  "mean_log_zoom_per_step": 0.0007864583333333332,
+  "median_log_zoom_per_step": 0.0,
+  "share_pairs_with_expansion": 0.07569444444444444,
+  "mean_abs_shift_px": 0.8909722222222223,
+  "shift_only_residual": 0.009919664410547549,
+  "zoom_shift_residual": 0.009911551118461858,
+  "residual_reduction_from_zoom": 0.0008178998552677008,
+  "expanded_forward_speed_px_per_step": 0.0,
+  "forward_motion_fraction_per_step": 0.000786149156035254
+ }
+}

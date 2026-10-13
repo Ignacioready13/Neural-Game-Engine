@@ -31,7 +31,7 @@ from steer import click_features
 from train import _set_seed
 
 EXTRA_HIST = 8
-SELF_K = 2              # self-conditioning roll-in steps (train on own outputs)
+SELF_K = 6              # self-conditioning roll-in steps (train on own outputs)
 
 DEFAULT_CONFIG = {
     "name": "flow64",
@@ -53,10 +53,16 @@ DEFAULT_CONFIG = {
     "self_prob": 0.5,       # fraction of a batch trained on the model's own frames
     "noise_scale": 0.08,    # flow initial-noise scale (matched to the residual)
     "self_k": SELF_K,
+    "attn": False,          # low-resolution spatial self-attention in the denoiser
+    "net_base": None,       # denoiser width (defaults to `base`, which sizes the core)
+    "edge_weight": 0.0,     # up-weight the revealed strip the warp had to invent
+    "self_k_min": None,     # if set, roll in at least this many steps
     "mirror_prob": 0.5,
     "onset_weight": 3.0,
     "val_every": 500,
+    "log_every": 50,        # progress line with steps/s (0 disables)
     "val_windows": 256,
+    "val_seeds": 3,         # sampling seeds averaged for the checkpoint decision
     "num_workers": 3,
     "resume": None,         # checkpoint path to continue training from
     "out": "runs",
@@ -158,12 +164,21 @@ def feats_at(hist_t, K, k):
 
 
 @torch.no_grad()
-def evaluate(model, packed, ds, cfg, device, use_bf16):
+def evaluate(model, packed, ds, cfg, device, use_bf16, seeds=(0,)):
+    """Validation flow loss and sampled L1, averaged over ``seeds`` sampling seeds.
+
+    ``val_sample_l1`` is the sampled one-step error and it is *stochastic*: with one
+    seed it moves by a factor of two between neighbouring checkpoints (flow96's log
+    swings 0.068 → 0.286 → 0.097), so selecting ``best.pt`` on a single-seed value
+    picks noise.  Averaging over seeds makes the checkpoint choice meaningful; the
+    per-seed standard deviation is reported alongside it.
+    """
     model.eval()
     rng = np.random.default_rng(0)
     n = min(cfg["val_windows"], len(ds))
     idx = np.linspace(0, len(ds) - 1, n).astype(int)
-    tot_flow, tot_samp, m = 0.0, 0.0, 0
+    tot_flow, m = 0.0, 0
+    per_seed = {int(sd): 0.0 for sd in seeds}
     loader = DataLoader(torch.utils.data.Subset(ds, idx.tolist()),
                         batch_size=cfg["batch_size"], shuffle=False, num_workers=0)
     for batch in loader:
@@ -171,12 +186,16 @@ def evaluate(model, packed, ds, cfg, device, use_bf16):
         feats = feats_at(hist_t, cfg["K"], 0)
         with torch.autocast(device_type=device, dtype=torch.bfloat16, enabled=use_bf16):
             loss, _ = flow_training_loss(model, ctx, feats, tgt, noise_aug=0.0)
-            out = model.predict(ctx, features=feats, seed=0)
+            outs = {int(sd): model.predict(ctx, features=feats, seed=int(sd))
+                    for sd in seeds}
         tot_flow += float(loss.item()) * ctx.shape[0]
-        tot_samp += float(F.l1_loss(out.float(), tgt)) * ctx.shape[0]
+        for sd, out in outs.items():
+            per_seed[sd] += float(F.l1_loss(out.float(), tgt)) * ctx.shape[0]
         m += ctx.shape[0]
     model.train()
-    return {"val_flow": tot_flow / m, "val_sample_l1": tot_samp / m}
+    vals = np.array([per_seed[int(sd)] / m for sd in seeds], dtype=np.float64)
+    return {"val_flow": tot_flow / m, "val_sample_l1": float(vals.mean()),
+            "val_sample_l1_sd": float(vals.std()), "val_sample_l1_seeds": len(seeds)}
 
 
 def train(config: dict) -> dict:
@@ -196,7 +215,9 @@ def train(config: dict) -> dict:
                            steps=config["steps"], cond_dim=config["cond_dim"],
                            core_mode=config["core_mode"],
                            freeze_core=config["freeze_core"],
-                           noise_scale=config.get("noise_scale", 0.08)).to(device)
+                           noise_scale=config.get("noise_scale", 0.08),
+                           attn=bool(config.get("attn", False)),
+                           net_base=config.get("net_base")).to(device)
     if config["core"]:
         core_payload = torch.load(config["core"], map_location=device, weights_only=False)
         model.core.load_state_dict(core_payload["state_dict"])
@@ -248,7 +269,8 @@ def train(config: dict) -> dict:
         self_rows = np.where(rng.random(ctx.shape[0]) < config["self_prob"])[0]
         if sk > 0 and len(self_rows):
             sel = torch.from_numpy(self_rows).to(device)
-            n_steps = int(rng.integers(1, sk + 1))
+            k_lo = int(config.get("self_k_min") or 1)
+            n_steps = int(rng.integers(min(k_lo, sk), sk + 1))
             with torch.no_grad():
                 buf = ctx[sel].clone()
                 for j in range(n_steps):
@@ -269,18 +291,25 @@ def train(config: dict) -> dict:
         opt.zero_grad(set_to_none=True)
         with torch.autocast(device_type=device, dtype=torch.bfloat16, enabled=use_bf16):
             loss, _ = flow_training_loss(model, ctx, feats, tgt,
-                                         noise_aug=config["noise_aug"])
+                                         noise_aug=config["noise_aug"],
+                                         edge_weight=float(config.get("edge_weight") or 0.0))
         loss.backward()
         torch.nn.utils.clip_grad_norm_(params, 5.0)
         opt.step()
         running += float(loss.item()); seen += 1; step += 1
+        if config.get("log_every") and step % config["log_every"] == 0:
+            el = time.time() - t0
+            print(f"  step {step}/{config['max_steps']}  {step / max(1e-9, el):.2f} steps/s  "
+                  f"elapsed {el:.0f}s  train_flow {running / max(1, seen):.4f}", flush=True)
         if step % config["val_every"] == 0 or step == config["max_steps"]:
             tr = running / seen; running, seen = 0.0, 0
-            v = evaluate(model, packed, val_ds, config, device, use_bf16)
+            v = evaluate(model, packed, val_ds, config, device, use_bf16,
+                         seeds=tuple(range(int(config.get("val_seeds", 1) or 1))))
             rec = {"step": step, "train_flow": tr, "elapsed_s": time.time() - t0, **v}
             log.append(rec)
             print(f"step {step} train {tr:.4f} val_flow {v['val_flow']:.4f} "
-                  f"val_sample_l1 {v['val_sample_l1']:.4f} ({time.time() - t0:.0f}s)",
+                  f"val_sample_l1 {v['val_sample_l1']:.4f}"
+                  f"+-{v.get('val_sample_l1_sd', 0.0):.4f} ({time.time() - t0:.0f}s)",
                   flush=True)
             if v["val_sample_l1"] < best:
                 best = v["val_sample_l1"]
@@ -323,6 +352,13 @@ def main(argv=None) -> int:
             config.update(json.load(f))
     config.update({k: v for k, v in vars(args).items()
                    if v is not None and k != "config_json"})
+    # Guard against the easy mistake of passing the *training* budget to --steps,
+    # which is the number of Euler steps in the sampler: 8000 of those means 8000
+    # U-Net evaluations per generated frame and a run that never reaches step 1.
+    if int(config["steps"]) > 64:
+        raise SystemExit(
+            f"--steps {config['steps']} is the ODE sampling-steps count, not the "
+            f"training budget; use --max-steps {config['steps']} for training steps")
     train(config)
     return 0
 

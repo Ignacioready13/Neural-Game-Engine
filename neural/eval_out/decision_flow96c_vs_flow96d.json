@@ -1,0 +1,321 @@
+{
+ "incumbent": "flow96c",
+ "rows": [
+  {
+   "name": "flow96d",
+   "summary": {
+    "name": "flow96d",
+    "clips": "main_clips",
+    "seeds": [
+     0,
+     1,
+     2
+    ],
+    "checkpoint": "/home/ignac/NeuralGameEngine/neural/runs/flow96d/best.pt",
+    "S": {
+     "counterfactual_near": 0.9618320610687023,
+     "shift_ratio": 0.8194729527132681,
+     "shift_ratio_pass": true,
+     "sustained_sign": 0.47843137254901963,
+     "sustained_ratio": 0.43574264485577635
+    },
+    "R": {
+     "20": {
+      "spectrum": 1.2765079394985106,
+      "spectrum_sd": 0.06559945977070683,
+      "lap_ratio": 0.9264347110639969,
+      "lap_ratio_sd": 0.013014975865238755,
+      "auc": 0.998611111111111,
+      "auc_sd": 0.0012001371663718252,
+      "band_high": 0.9279671978500259
+     },
+     "60": {
+      "spectrum": 1.8528680143721503,
+      "spectrum_sd": 0.08363118581315152,
+      "lap_ratio": 1.6927335270788089,
+      "lap_ratio_sd": 0.11603541703641204,
+      "auc": 0.9967592592592593,
+      "auc_sd": 0.003304920055106436,
+      "band_high": 2.231376826404637
+     },
+     "150": {
+      "spectrum": 1.7962535254068481,
+      "spectrum_sd": 0.06980460728824762,
+      "lap_ratio": 1.7861631447536952,
+      "lap_ratio_sd": 0.08389916905491354,
+      "auc": 1.0,
+      "auc_sd": 0.0,
+      "band_high": 2.2148108832237936
+     },
+     "300": {
+      "spectrum": 1.9487045738909228,
+      "spectrum_sd": 0.06676565086273265,
+      "lap_ratio": 2.039082312894957,
+      "lap_ratio_sd": 0.11780692448668732,
+      "auc": 1.0,
+      "auc_sd": 0.0,
+      "band_high": 2.9530032766501413
+     }
+    },
+    "D": {
+     "20": {
+      "gen_share": 0.5166666666666667,
+      "gen_share_sd": 0.08897565210026095,
+      "real_share": 0.48500000000000004,
+      "ratio": 1.0652920962199313,
+      "ratio_sd": 0.18345495278404322
+     },
+     "60": {
+      "gen_share": 0.4833333333333334,
+      "gen_share_sd": 0.07846914939903077,
+      "real_share": 0.585,
+      "ratio": 0.8262108262108262,
+      "ratio_sd": 0.13413529811800132
+     },
+     "150": {
+      "gen_share": 0.08055555555555556,
+      "gen_share_sd": 0.030681558381075724,
+      "real_share": 0.45,
+      "ratio": 0.17901234567901234,
+      "ratio_sd": 0.06818124084683494
+     },
+     "300": {
+      "gen_share": 0.0,
+      "gen_share_sd": 0.0,
+      "real_share": 0.525,
+      "ratio": 0.0,
+      "ratio_sd": 0.0
+     },
+     "events": {
+      "gen_per_100": 0.5444444444444444,
+      "gen_positive_share": 0.14733333333333334,
+      "per_scenario": {
+       "no_click": 0.5666666666666667,
+       "real_click": 0.6666666666666667,
+       "scripted_alt": 0.4000000000000001
+      }
+     }
+    },
+    "H": {
+     "drift": 0.0009439151341895565,
+     "drift_real": 8.540826637663685e-06,
+     "drift_sd": 1.0842021724855044e-19,
+     "change": 0.0031075661769136786,
+     "change_real": 0.021773149073123933,
+     "change_sd": 0.0,
+     "motion": 0.9475621298640607,
+     "motion_sd": 1.1102230246251565e-16,
+     "motion_by_scenario": {
+      "no_click": 0.9475621298640607,
+      "real_click": 0.7703243749262914,
+      "scripted_alt": 0.8311481659455442,
+      "no_click_sd": 1.1102230246251565e-16,
+      "real_click_sd": 0.0,
+      "scripted_alt_sd": 0.0
+     },
+     "motion_real": 10.322109719693193,
+     "frozen": false,
+     "collapse": false,
+     "dark_r_minus_b": 0.005603185544411342,
+     "dark_r_minus_b_real": 0.0003458472900092602,
+     "per_horizon": {
+      "20": {
+       "mean_luminance_gen": 0.47720388571421307,
+       "mean_luminance_real": 0.440493643283844,
+       "dark_share_gen": 0.0,
+       "dark_r_minus_b_gen": null,
+       "near_black_share_gen": 0.0,
+       "near_white_share_gen": 0.0,
+       "dark_share_gen_sd": 0.0,
+       "mean_luminance_gen_sd": 0.003641157189058797,
+       "mean_luminance_real_sd": 0.0,
+       "near_black_share_gen_sd": 0.0,
+       "near_white_share_gen_sd": 0.0
+      },
+      "60": {
+       "mean_luminance_gen": 0.5977641542752584,
+       "mean_luminance_real": 0.46832019090652466,
+       "dark_share_gen": 0.0,
+       "dark_r_minus_b_gen": null,
+       "near_black_share_gen": 0.0,
+       "near_white_share_gen": 0.0,
+       "dark_share_gen_sd": 0.0,
+       "mean_luminance_gen_sd": 0.007220612244286134,
+       "mean_luminance_real_sd": 0.0,
+       "near_black_share_gen_sd": 0.0,
+       "near_white_share_gen_sd": 0.0
+      },
+      "150": {
+       "mean_luminance_gen": 0.7545956969261169,
+       "mean_luminance_real": 0.4388873279094696,
+       "dark_share_gen": 0.0,
+       "dark_r_minus_b_gen": null,
+       "near_black_share_gen": 0.0,
+       "near_white_share_gen": 0.0,
+       "dark_share_gen_sd": 0.0,
+       "mean_luminance_gen_sd": 0.007670523484590962,
+       "mean_luminance_real_sd": 0.0,
+       "near_black_share_gen_sd": 0.0,
+       "near_white_share_gen_sd": 0.0
+      },
+      "300": {
+       "mean_luminance_gen": 0.7905925114949545,
+       "mean_luminance_real": 0.45618629455566406,
+       "dark_share_gen": 0.0,
+       "dark_r_minus_b_gen": null,
+       "near_black_share_gen": 0.0,
+       "near_white_share_gen": 0.0,
+       "dark_share_gen_sd": 0.0,
+       "mean_luminance_gen_sd": 0.001794653611353088,
+       "mean_luminance_real_sd": 0.0,
+       "near_black_share_gen_sd": 0.0,
+       "near_white_share_gen_sd": 0.0
+      }
+     }
+    },
+    "T": {
+     "fps_mean": 37.09355316548962,
+     "fps_p95": 22.201607436024407,
+     "peak_vram_mb": 417.41943359375,
+     "power": {
+      "mean_gpu_w": 44.15,
+      "peak_gpu_w": 65.03,
+      "mean_cpu_w": 33.04,
+      "mean_gpu_temp_c": 64.5,
+      "throttle_events": [],
+      "wh_per_hour_of_play": 44.15,
+      "j_per_frame": 1.1902,
+      "w_per_fps": 1.1902,
+      "cpu_available": true
+     }
+    },
+    "LOOP": null
+   },
+   "keep": false,
+   "rule": {
+    "steering_cf_ok": true,
+    "steering_shift_ratio_ok": true,
+    "steering_sustained_ok": false,
+    "speed_ok": true,
+    "health_ok": true,
+    "drift_not_worse": false,
+    "improvement": {
+     "R": {
+      "improved": false,
+      "improved_all_beyond_noise": false,
+      "worse": true,
+      "gains": [
+       -0.9843,
+       0.0,
+       -0.665,
+       -0.761,
+       0.0,
+       -0.5397
+      ],
+      "noise": [
+       0.0989,
+       0.0,
+       0.0888,
+       0.1432,
+       0.0,
+       0.1663
+      ],
+      "detail": {
+       "spectrum@150": {
+        "gain": -0.9843,
+        "noise": 0.0989,
+        "rel": -1.212,
+        "beyond_noise": false
+       },
+       "auc@150": {
+        "gain": 0.0,
+        "noise": 0.0,
+        "rel": 0.0,
+        "beyond_noise": false
+       },
+       "lap_ratio@150": {
+        "gain": -0.665,
+        "noise": 0.0888,
+        "rel": -5.49,
+        "beyond_noise": false
+       },
+       "spectrum@300": {
+        "gain": -0.761,
+        "noise": 0.1432,
+        "rel": -0.641,
+        "beyond_noise": false
+       },
+       "auc@300": {
+        "gain": 0.0,
+        "noise": 0.0,
+        "rel": 0.0,
+        "beyond_noise": false
+       },
+       "lap_ratio@300": {
+        "gain": -0.5397,
+        "noise": 0.1663,
+        "rel": -1.081,
+        "beyond_noise": false
+       }
+      }
+     },
+     "D": {
+      "improved": false,
+      "improved_all_beyond_noise": false,
+      "worse": true,
+      "gains": [
+       -0.2284,
+       -0.8942
+      ],
+      "noise": [
+       0.1744,
+       0.1641
+      ],
+      "detail": {
+       "ratio@150": {
+        "gain": -0.2284,
+        "noise": 0.1744,
+        "rel": -0.385,
+        "beyond_noise": false
+       },
+       "ratio@300": {
+        "gain": -0.8942,
+        "noise": 0.1641,
+        "rel": -8.45,
+        "beyond_noise": false
+       }
+      }
+     },
+     "H": {
+      "improved": true,
+      "worse": true,
+      "detail": {
+       "motion": {
+        "gain": 0.13259,
+        "noise": 0.0,
+        "closer_to_real": true
+       },
+       "drift": {
+        "gain": -0.00078,
+        "noise": 0.0,
+        "closer_to_real": false
+       },
+       "change": {
+        "incumbent": 0.02005,
+        "candidate": 0.01939,
+        "decides": false
+       },
+       "dark_r_minus_b": {
+        "incumbent": 0.00991,
+        "candidate": 0.00527,
+        "decides": false
+       }
+      }
+     }
+    },
+    "families_improved": 1,
+    "nothing_meaningfully_worse": false
+   }
+  }
+ ]
+}

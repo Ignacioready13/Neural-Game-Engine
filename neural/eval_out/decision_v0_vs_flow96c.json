@@ -1,0 +1,314 @@
+{
+ "incumbent": "v0",
+ "rows": [
+  {
+   "name": "flow96c",
+   "summary": {
+    "name": "flow96c",
+    "clips": "main_clips",
+    "seeds": [
+     0,
+     1,
+     2
+    ],
+    "checkpoint": "/home/ignac/NeuralGameEngine/neural/runs/flow96c/best.pt",
+    "S": {
+     "counterfactual_near": 0.9618320610687023,
+     "shift_ratio": 0.8830873350038656,
+     "shift_ratio_pass": true,
+     "sustained_sign": 0.5137254901960784,
+     "sustained_ratio": 0.4949520695642801
+    },
+    "R": {
+     "20": {
+      "spectrum": 0.6045643627935453,
+      "spectrum_sd": 0.03353411825904081,
+      "lap_ratio": 0.794885021924335,
+      "lap_ratio_sd": 0.006043858856403609,
+      "auc": 0.9991666666666666,
+      "auc_sd": 0.001178511301977554,
+      "band_high": 0.8271759749772762
+     },
+     "60": {
+      "spectrum": 0.6249386702522894,
+      "spectrum_sd": 0.046468261869195386,
+      "lap_ratio": 0.9535581171270783,
+      "lap_ratio_sd": 0.032470817583643036,
+      "auc": 0.9579629629629629,
+      "auc_sd": 0.033533606180728974,
+      "band_high": 1.1338160900291636
+     },
+     "150": {
+      "spectrum": 0.8119102257278922,
+      "spectrum_sd": 0.0988900432529346,
+      "lap_ratio": 1.1211356167361641,
+      "lap_ratio_sd": 0.08876911810113128,
+      "auc": 1.0,
+      "auc_sd": 0.0,
+      "band_high": 1.2618298490723612
+     },
+     "300": {
+      "spectrum": 1.1877483435099883,
+      "spectrum_sd": 0.14317259927128176,
+      "lap_ratio": 1.499423891886,
+      "lap_ratio_sd": 0.16633763332807833,
+      "auc": 1.0,
+      "auc_sd": 0.0,
+      "band_high": 2.1805990913406057
+     }
+    },
+    "D": {
+     "20": {
+      "gen_share": 0.6833333333333332,
+      "gen_share_sd": 0.09154031696268934,
+      "real_share": 0.48500000000000004,
+      "ratio": 1.4089347079037802,
+      "ratio_sd": 0.18874292157255532
+     },
+     "60": {
+      "gen_share": 0.7277777777777779,
+      "gen_share_sd": 0.06538112386633232,
+      "real_share": 0.585,
+      "ratio": 1.2440645773979109,
+      "ratio_sd": 0.11176260489971343
+     },
+     "150": {
+      "gen_share": 0.7166666666666667,
+      "gen_share_sd": 0.07846914939903077,
+      "real_share": 0.45,
+      "ratio": 1.5925925925925923,
+      "ratio_sd": 0.1743758875534017
+     },
+     "300": {
+      "gen_share": 0.5805555555555555,
+      "gen_share_sd": 0.08615590232928233,
+      "real_share": 0.525,
+      "ratio": 1.1058201058201058,
+      "ratio_sd": 0.16410648062720448
+     },
+     "events": {
+      "gen_per_100": 0.6,
+      "gen_positive_share": 0.639,
+      "per_scenario": {
+       "no_click": 0.6,
+       "real_click": null,
+       "scripted_alt": null
+      }
+     }
+    },
+    "H": {
+     "drift": 0.00016792714204996164,
+     "drift_real": -4.812355241597975e-05,
+     "drift_sd": 0.0,
+     "change": 0.0024441567482426764,
+     "change_real": 0.022493894211947918,
+     "change_sd": 0.0,
+     "motion": 0.8149689408616577,
+     "motion_sd": 1.1102230246251565e-16,
+     "motion_by_scenario": null,
+     "motion_real": 10.17778244759038,
+     "frozen": false,
+     "collapse": false,
+     "dark_r_minus_b": -0.009577113552950323,
+     "dark_r_minus_b_real": 0.0003289930522441863,
+     "per_horizon": {
+      "20": {
+       "mean_luminance_gen": 0.3771998882293701,
+       "mean_luminance_real": 0.440493643283844,
+       "dark_share_gen": 0.0,
+       "dark_r_minus_b_gen": null,
+       "near_black_share_gen": 0.0,
+       "near_white_share_gen": 0.0,
+       "dark_share_gen_sd": 0.0,
+       "mean_luminance_gen_sd": 0.002518946103885518,
+       "mean_luminance_real_sd": 0.0,
+       "near_black_share_gen_sd": 0.0,
+       "near_white_share_gen_sd": 0.0
+      },
+      "60": {
+       "mean_luminance_gen": 0.3907475570837657,
+       "mean_luminance_real": 0.46832019090652466,
+       "dark_share_gen": 0.0,
+       "dark_r_minus_b_gen": null,
+       "near_black_share_gen": 0.0,
+       "near_white_share_gen": 0.0,
+       "dark_share_gen_sd": 0.0,
+       "mean_luminance_gen_sd": 0.008651875551818393,
+       "mean_luminance_real_sd": 0.0,
+       "near_black_share_gen_sd": 0.0,
+       "near_white_share_gen_sd": 0.0
+      },
+      "150": {
+       "mean_luminance_gen": 0.40968488653500873,
+       "mean_luminance_real": 0.4388873279094696,
+       "dark_share_gen": 0.0,
+       "dark_r_minus_b_gen": null,
+       "near_black_share_gen": 0.0,
+       "near_white_share_gen": 0.0,
+       "dark_share_gen_sd": 0.0,
+       "mean_luminance_gen_sd": 0.01978817372489072,
+       "mean_luminance_real_sd": 0.0,
+       "near_black_share_gen_sd": 0.0,
+       "near_white_share_gen_sd": 0.0
+      },
+      "300": {
+       "mean_luminance_gen": 0.4341556827227275,
+       "mean_luminance_real": 0.45618629455566406,
+       "dark_share_gen": 0.002777777777777778,
+       "dark_r_minus_b_gen": null,
+       "near_black_share_gen": 0.0,
+       "near_white_share_gen": 0.0,
+       "dark_share_gen_sd": 0.00392837100659193,
+       "mean_luminance_gen_sd": 0.02607339933789095,
+       "mean_luminance_real_sd": 0.0,
+       "near_black_share_gen_sd": 0.0,
+       "near_white_share_gen_sd": 0.0
+      }
+     }
+    },
+    "T": {
+     "fps_mean": 37.068309678837345,
+     "fps_p95": 22.44562182634113,
+     "peak_vram_mb": 417.41943359375,
+     "power": {
+      "mean_gpu_w": 44.86,
+      "peak_gpu_w": 68.39,
+      "mean_cpu_w": 30.91,
+      "mean_gpu_temp_c": 64.4,
+      "throttle_events": [],
+      "wh_per_hour_of_play": 44.86,
+      "j_per_frame": 1.2102,
+      "w_per_fps": 1.2102,
+      "cpu_available": true
+     }
+    },
+    "LOOP": null
+   },
+   "keep": true,
+   "rule": {
+    "steering_cf_ok": true,
+    "steering_shift_ratio_ok": true,
+    "steering_sustained_ok": true,
+    "speed_ok": true,
+    "health_ok": true,
+    "drift_not_worse": true,
+    "improvement": {
+     "R": {
+      "improved": false,
+      "improved_all_beyond_noise": false,
+      "worse": false,
+      "gains": [
+       0.0674,
+       -0.0021,
+       -0.041,
+       0.0271,
+       0.0,
+       -0.0274
+      ],
+      "noise": [
+       0.0989,
+       0.003,
+       0.0888,
+       0.1432,
+       0.0,
+       0.1663
+      ],
+      "detail": {
+       "spectrum@150": {
+        "gain": 0.0674,
+        "noise": 0.0989,
+        "rel": 0.077,
+        "beyond_noise": false
+       },
+       "auc@150": {
+        "gain": -0.0021,
+        "noise": 0.003,
+        "rel": -0.004,
+        "beyond_noise": false
+       },
+       "lap_ratio@150": {
+        "gain": -0.041,
+        "noise": 0.0888,
+        "rel": -0.511,
+        "beyond_noise": false
+       },
+       "spectrum@300": {
+        "gain": 0.0271,
+        "noise": 0.1432,
+        "rel": 0.022,
+        "beyond_noise": false
+       },
+       "auc@300": {
+        "gain": 0.0,
+        "noise": 0.0,
+        "rel": 0.0,
+        "beyond_noise": false
+       },
+       "lap_ratio@300": {
+        "gain": -0.0274,
+        "noise": 0.1663,
+        "rel": -0.058,
+        "beyond_noise": false
+       }
+      }
+     },
+     "D": {
+      "improved": true,
+      "improved_all_beyond_noise": false,
+      "worse": false,
+      "gains": [
+       0.1173,
+       0.6561
+      ],
+      "noise": [
+       0.1744,
+       0.1641
+      ],
+      "detail": {
+       "ratio@150": {
+        "gain": 0.1173,
+        "noise": 0.1744,
+        "rel": 0.165,
+        "beyond_noise": false
+       },
+       "ratio@300": {
+        "gain": 0.6561,
+        "noise": 0.1641,
+        "rel": 0.861,
+        "beyond_noise": true
+       }
+      }
+     },
+     "H": {
+      "improved": true,
+      "worse": false,
+      "detail": {
+       "motion": {
+        "gain": 0.17996,
+        "noise": 0.0,
+        "closer_to_real": true
+       },
+       "drift": {
+        "gain": 9e-05,
+        "noise": 0.0,
+        "closer_to_real": true
+       },
+       "change": {
+        "incumbent": 0.01767,
+        "candidate": 0.02005,
+        "decides": false
+       },
+       "dark_r_minus_b": {
+        "incumbent": 0.00617,
+        "candidate": 0.00991,
+        "decides": false
+       }
+      }
+     }
+    },
+    "families_improved": 2,
+    "nothing_meaningfully_worse": true
+   }
+  }
+ ]
+}

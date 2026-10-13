@@ -1,0 +1,242 @@
+PROJECT BRIEF — STAGE 6
+THE PLAYER: A PROPER REAL-TIME CLIENT FOR COMPARING AND EXPERIENCING OUR MODELS
+NeuralGameEngine (the /neural half of the monorepo)
+================================================================================
+
+--------------------------------------------------------------------------------
+0. HOW TO READ THIS BRIEF
+--------------------------------------------------------------------------------
+Unlike earlier briefs, this one deliberately constrains the WHAT, not the HOW. It tells
+you what the user needs and why, lists requirements and priorities, and leaves the
+design, libraries, file layout and implementation entirely to your judgment. You have the
+actual code; I do not. If you find that something already exists, build on it; if you find
+a better way than anything suggested here, take it and say why in the report.
+
+Read first:
+  - neural/README.md, neural/docs/STAGE5-PROGRESS.md (MORNING SUMMARY first),
+    neural/docs/STAGE5-REPORT.md and STAGE5B-REPORT.md (what the models are and how they
+    were evaluated), CHANGES-LOG.md (newest first)
+  - neural/play.py (the existing player; see Section 1), neural/steer.py, neural/flow.py,
+    neural/gates.py (the G4 loop), neural/powerlog.py
+  - engine/src (READ-ONLY reference): how the engine mapped a click to the held signal
+    and how it drew the click pulse, so the player matches it
+Where this brief and the code or docs disagree, trust the code and tell the user.
+
+RULES OF ENGAGEMENT (unchanged from earlier stages; they override anything else here):
+ 1. GIT IS OFF LIMITS. The user manages git. Read-only inspection (git diff, status, log,
+    show, rev-parse) is fine. You may edit .gitignore and must list any such edit.
+ 2. NO SUDO, NO SYSTEM CHANGES. If a display library, SDL dependency, driver or anything
+    else needs sudo or an OS package, STOP, tell the user exactly what to run and why,
+    and wait (the user is available during this stage). No workarounds.
+ 3. THE ENGINE AND ALL DATASETS ARE READ-ONLY. No engine changes, no new engine data. Do not
+    modify existing training checkpoints in neural/runs/ (copying them is fine).
+ 4. Heavy jobs go through neural/memcap.sh. This stage should need little GPU beyond running
+    the models; no training happens here.
+ 5. VISUAL AND FEEL JUDGMENT BELONG TO THE USER. You cannot see the window or feel the
+    latency. Verify what you can without eyes (headless/scripted modes, tests, logged frame
+    times, window/fullscreen state queries), then hand it over. If you use a vision subagent
+    (deepseek/deepseek-v4-flash-vision-exp), do so very sparingly and treat its output as weak
+    evidence; remember that large black regions in these frames are usually heavy fog or the
+    far end of a big room, not doorways.
+ 6. Authenticity (non-negotiable, from Stage 5): at play time the models see only their own
+    generated frames plus the click-derived signals, after a real seed context to start from.
+    The player must never read the engine, the sidecar, or door information, and must not
+    paste dataset frames into the stream after the seed context. The click pulse and every
+    other overlay are display-only and are never fed to a model.
+ 7. Subagents: optional, default none (this is a small, mostly sequential task). Models on
+    this machine: deepseek/deepseek-v4-pro (hard), deepseek/deepseek-v4-flash and
+    deepseek/deepseek-flash (easy, no vision), deepseek/deepseek-v4-flash-vision-exp (vision,
+    experimental). Define any subagent fresh; tell it not to touch git or the GPU.
+ 8. KEEP IT SENSIBLE. Roughly 2-3 hours of work is the expectation, and there is no need for
+    heavy verification (a short test list is in Section 6). If something is dragging for
+    about 40 minutes, take the simplest version that meets the intent and note it.
+ 9. CHECK-INS. Start your work with the inventory message of Section 1 (it does not need a
+    reply). After that, work through to the handoff without stopping, EXCEPT start a message
+    with "CHECK-IN" and wait if: (i) sudo or an OS package is needed; (ii) you find that a
+    requirement here conflicts with something expensive to change (for example you would have
+    to modify an existing checkpoint's format); (iii) you discover a bug in a model or the
+    evaluation that changes what the user thinks they know about 5a or 5b. Do NOT use the
+    interactive question tool; write plain text and stop.
+10. Keep neural/docs/STAGE5-PROGRESS.md style notes in a short neural/docs/STAGE6-PROGRESS.md
+    so a restarted session can resume.
+
+--------------------------------------------------------------------------------
+1. START WITH AN INVENTORY (FIRST ~15 MINUTES)
+--------------------------------------------------------------------------------
+A basic player already exists (neural/play.py; Stage 5, Milestone 5). The user launches it
+with:
+    ./memcap.sh --mem 12G -- .venv/bin/python play.py --checkpoint runs/flow96/best.pt \
+        --packed data/bulk_v1_96x72 --split val
+and has these problems with it: the window is tiny and cannot be enlarged; there is no model
+selector (and that command loads the OLD model, "5a", not the overnight winner); the click
+pulse from the engine is not reproduced; the flags and the places models live are unclear to
+them. The user does not know how much of the "real client" already exists.
+First, inspect play.py and what it does today, and send ONE plain-text message beginning
+"INVENTORY (no reply needed)" saying, concisely: what exists and works; what is missing or
+broken relative to Section 2; which model the command above actually loads (and which
+checkpoint files "5a" and "5b" correspond to, see Section 2.1); and your plan. Then continue
+immediately.
+
+--------------------------------------------------------------------------------
+2. WHAT THE USER NEEDS
+--------------------------------------------------------------------------------
+The player's job is to let the user EXPERIENCE and COMPARE models by hand, so they can give
+well-informed feedback for the next training round. It is also the project's real-time
+"thin client" (original plan step 6): it reads the mouse, applies the same hold and debounce
+semantics as the engine, runs the network in a loop, and displays the result in real time.
+Priorities: M = must have, S = should have, N = nice to have.
+
+2.1 Model selection and the model registry (M)
+  - Model names: each MAJOR training iteration gets a letter: "5a", "5b", "5c", ... going
+    forward. So far: 5a = the Stage 5 model before the overnight run (generator
+    runs/flow96/best.pt on the steering core runs/steer96/best.pt); 5b = the overnight winner
+    (generator runs/flow96c/best.pt on the same steering core; this is the Stage 5b "flow96c").
+    Verify these identifications against the Stage 5/5b reports and progress files and tell
+    the user if anything differs. (The rejected overnight candidate flow96d may be registered as
+    an optional, hidden "experimental" entry; use judgment.)
+  - A stable, simple registry so models can be selected by name and new ones added in seconds
+    later. Your design: for example neural/models/<name>/ holding the checkpoint copies (so
+    later training runs cannot overwrite what "5a" means), plus a small registry file (JSON or
+    similar) with name, description, parent/lineage, which checkpoints it needs, resolution,
+    where its evaluation records live, and notes. Provide a tiny command to register a new
+    model ("register 5c with these checkpoints and this note"), and a command or flag that
+    lists the available models.
+  - Selection: by a command-line flag (e.g. --model 5b) AND from inside the running player
+    (a hotkey that cycles, and/or an on-screen menu or dropdown). Switching models mid-session
+    should restart from the same seed context (and the same noise seed if sensible) so that
+    the comparison is fair, and should say so on screen. Keep every model loaded or load
+    quickly; whatever is smooth.
+  - The default model when no flag is given should be the newest registered one (currently 5b)
+    and the player should print which model it loaded.
+
+2.2 Window and display (M)
+  - Resizable window and a fullscreen toggle (for example F11 and/or Alt+Enter, Esc to leave),
+    working on this machine's desktop. Preserve the generated image's aspect ratio (letterbox
+    as needed), scale the 96x72 frames up cleanly (consider a toggle between sharp/nearest and
+    smooth scaling), and start at a sensible, reasonably large default size (the user's complaint
+    is that the current window is tiny). If SDL/pygame cannot do something here without system
+    changes, see rule 2.
+  - Click-to-signal mapping must be relative to the displayed IMAGE (not the window):
+    X = clamp((clientX - imageLeft) / imageWidth * 2 - 1, -1, 1), left negative, exactly as the
+    engine does it for its canvas; clicks in the letterbox margins clamp to the edges. Ignore Y.
+
+2.3 Click feedback (M)
+  - Re-implement the engine's click pulse: a small, quickly fading, translucent circle of
+    colour at the click position, fading over roughly 300-500 ms. Read the engine's source
+    (read-only) and reproduce its look as closely as is reasonable (size, colour, fade curve,
+    and the fact that it shows for EVERY click, including ones the debounce ignores). It is an
+    overlay drawn on the display only and must never enter the model's input. Position it at the
+    real click location in the scaled image.
+
+2.4 Real-time behavior (M)
+  - Simulate at the training rate: the models were trained at 20 Hz, so generate exactly one
+    frame per 50 ms of real time (a fixed 20 Hz timestep), regardless of how fast the GPU could
+    go. Generating faster would make everything move too fast. If the model cannot keep up, run
+    as fast as possible and show the real rate and a warning rather than silently misbehaving.
+  - Click semantics identical to the engine: the held signal changes only on an ACCEPTED click;
+    a click within 3 frames (150 ms) of the last accepted click is ignored for the signal (but
+    still shows the pulse); actionHasClicked latches to 1 after the first accepted click;
+    derived features (DeltaActionX, frames-since-click) computed exactly as in training. Verify
+    this against the training/feature code and the engine rather than assuming play.py is right.
+  - Per-frame cost must stay well inside the 50 ms budget on this laptop (the final models run
+    at roughly 37-68 steps/s in the benchmark loop). Do not let the display, event handling or
+    HUD add significant latency; avoid stalls from synchronisation and from copying frames
+    around unnecessarily.
+
+2.5 Starting a run (M)
+  - Each run starts from a REAL seed context of K frames taken from the dataset's early-episode
+    frames (these are the only dataset pixels ever shown; N6). Random per launch by default,
+    reproducible with a flag (seed / clip id), and the choice is shown in the HUD. The player
+    should not require the 18 GB packed set to be mounted if you can cheaply cache a few hundred
+    seed contexts (from different splits, labelled) into the registry or a small file; use
+    judgment.
+  - Restart key: new random seed context. "Same seed again" key: restart with the identical seed
+    context and noise seed.
+
+2.6 Making models comparable (S, high value; this is the user's actual purpose)
+  - Session recording and replay: record a session (model, seed context, noise seed, and the
+    click log with frame indices) to a small file, and replay it later against ANY model, so the
+    same clicks and same start can be seen on 5a and 5b. Headless replay should write a video or
+    GIF; replay in the window is a nice addition.
+  - If it can be done at a decent frame rate (the two models are each ~37-68 steps/s alone), a
+    side-by-side mode that runs two models on the same seed context and the same clicks (the
+    same click goes to both) would be the best possible comparison tool. If it cannot hold 20 Hz
+    for both, offer a lower-rate mode or rely on replay. Your judgment, and say what you chose.
+  - Screenshot key; video/GIF recording of the display (to a review folder). Keep simple.
+
+2.7 HUD and help (S)
+  - A toggleable on-screen overlay (and a help screen, e.g. H or F1) showing: model name, steps
+    per second and frame time (and a warning if below 20), the held click X and frames since the
+    last accepted click, the seed context/clip id and noise seed, resolution, fullscreen state,
+    and the list of key bindings. Also power draw if cheaply available (see 2.9). Default the
+    HUD to a compact form; the generated image is the point.
+  - Pause and single-step keys are useful for inspecting a frame.
+
+2.8 Launch and documentation (M)
+  - One obvious way to start it, for a user who does not remember flags: a short launcher (a
+    script or a documented one-liner) that handles memcap.sh and the virtual environment, and
+    a --help that lists every flag with its meaning and default, including how to list models
+    and how to pick one. Put a "How to play and compare models" section at the top of
+    neural/README.md with the exact commands, the key bindings, and where models and recordings
+    are stored.
+  - Print clear, friendly errors (missing checkpoint, no display, wrong model name).
+
+2.9 Power (N, the user's class tracks energy)
+  - Keep the existing live-session power logging (powerlog.py) working: on exit, append a ledger
+    record and print mean W, J per frame and Wh per hour. Optionally show live GPU power in the
+    HUD. Do not let sampling affect frame times.
+
+--------------------------------------------------------------------------------
+3. DESIGN FREEDOM
+--------------------------------------------------------------------------------
+Everything not listed above is yours: the display library (pygame-ce is installed; if something
+better is clearly justified and pip-installable inside the venv, you may use it), threading and
+frame-pacing design (for example generating in a worker thread with a small queue while the main
+thread handles input and drawing, or a single loop; measure and choose), how to share one loaded
+model implementation with the benchmark loop (G4) so the player and the benchmarks cannot drift
+apart, file layout, whether play.py is reworked or replaced, and extra conveniences you think a
+person doing hands-on model comparison would want. If you add something not in this brief, keep
+it light and mention it. If you find bugs in play.py or in how models are loaded and run, fix them
+and report them.
+
+--------------------------------------------------------------------------------
+4. WHAT NOT TO DO
+--------------------------------------------------------------------------------
+No training, no changes to model architectures or checkpoints, no engine changes, no new
+datasets, no dreamlike features, no network access beyond pip inside the venv, nothing that
+reads engine or sidecar data at play time.
+
+--------------------------------------------------------------------------------
+5. HANDOFF
+--------------------------------------------------------------------------------
+Finish with a short plain-text message to the user containing: the exact command(s) to launch the
+player and to list models; the key bindings; which models are registered and which checkpoints
+they map to; how to record and replay a session and how to do a 5a-versus-5b comparison; what
+you could verify and what only the user can judge (feel, latency, how fullscreen behaves on their
+desktop); and anything surprising you found. Then stop; the user will play with it and report back.
+
+--------------------------------------------------------------------------------
+6. VERIFICATION (short; do not expand it)
+--------------------------------------------------------------------------------
+  1. Existing tests still pass; add small tests for the click-to-signal mapping including
+     letterbox and clamping, the debounce/latch semantics (matching the engine), and loading both
+     registered models.
+  2. A scripted headless run of each registered model for a few hundred frames at the real 20 Hz
+     pacing, logging frame-time statistics (mean, p95, worst) and confirming no dropped steps.
+  3. A headless record-and-replay round trip: replaying the same recording on the same model gives
+     identical frames (or state exactly why it cannot), and replaying on the other model works.
+  4. Confirm the window can be created, resized and toggled to fullscreen in this environment, as
+     far as can be done without a human; say what could not be tested.
+  5. No-oracle check (N1/N2) still passes for the player: it reads no engine or sidecar data.
+
+--------------------------------------------------------------------------------
+7. DELIVERABLES
+--------------------------------------------------------------------------------
+  [ ] The player (and launcher) with the requirements above
+  [ ] The model registry with 5a and 5b registered and loadable, and the register-new-model command
+  [ ] neural/README.md "How to play and compare models" section; --help text
+  [ ] A short neural/docs/STAGE6-REPORT.md (technical): what already existed versus what you built
+      or changed, design decisions and why, how to add 5c, any bugs found, frame-time statistics,
+      what is unverified, files added and changed (for the user's commit), .gitignore edits
+  [ ] A short entry at the top of CHANGES-LOG.md
+  [ ] No git operations; no changes to the engine, datasets, or existing training checkpoints

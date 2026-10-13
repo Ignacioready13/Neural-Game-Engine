@@ -1,0 +1,38 @@
+{
+ "real": {
+  "positive_share": 0.6666666666666666,
+  "spectrum_distance": 0.0,
+  "laplacian_ratio": 1.0,
+  "auc": 0.5
+ },
+ "real+grain": {
+  "positive_share": 0.625,
+  "spectrum_distance": 2.2938932464260597,
+  "laplacian_ratio": 3.4177261982714984,
+  "auc": 1.0
+ },
+ "real+blur": {
+  "positive_share": 0.5416666666666666,
+  "spectrum_distance": 3.083039792659448,
+  "laplacian_ratio": 0.6680279113635202,
+  "auc": 1.0
+ },
+ "real+heavyblur": {
+  "positive_share": 0.5416666666666666,
+  "spectrum_distance": 4.158982108964618,
+  "laplacian_ratio": 0.6205504759902408,
+  "auc": 1.0
+ },
+ "melted": {
+  "positive_share": 0.625,
+  "spectrum_distance": 4.127173396570768,
+  "laplacian_ratio": 0.5872836787001492,
+  "auc": 1.0
+ },
+ "generator@300": {
+  "positive_share": 0.0,
+  "spectrum_distance": 1.0018164079105665,
+  "laplacian_ratio": 1.4648788060326576,
+  "auc": 1.0
+ }
+}

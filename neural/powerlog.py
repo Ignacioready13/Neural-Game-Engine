@@ -143,7 +143,9 @@ class _Rapl:
 
     def __init__(self):
         self.path = RAPL_GLOB
-        self.ok = os.access(self.path, os.R_OK)
+        # os.access() is not trustworthy here: sysfs reports mode 0444 while the
+        # driver still refuses reads for non-root, so actually attempt a read.
+        self.ok = _read_int(self.path) is not None
         self._last = None
         self._max_range = _read_int("/sys/class/powercap/intel-rapl:0/max_energy_range_uj") or 262143328850
         if self.ok:
@@ -167,7 +169,7 @@ class _Rapl:
 
 class _Battery:
     def __init__(self):
-        self.ok = os.access(BAT_POWER, os.R_OK)
+        self.ok = _read_int(BAT_POWER) is not None
 
     def sample(self):
         if not self.ok:
@@ -234,6 +236,10 @@ class PowerLogger:
             self._thread.join(timeout=5)
             self._thread = None
         return self.summary()
+
+    def latest(self):
+        """The most recent raw sample (for a live HUD readout; cheap and non-blocking)."""
+        return self._samples[-1] if self._samples else None
 
     def summary(self):
         end = time.time()
@@ -394,7 +400,8 @@ def write_markdown(data):
     idle = data.get("idle_baseline") or {}
     idle_w = idle.get("mean_gpu_w")
     recs = data["records"]
-    phase = [r for r in recs if r.get("purpose") != "idle_baseline"]
+    phase = [r for r in recs if r.get("purpose") != "idle_baseline"
+             and (r.get("duration_s") or 0) >= 1.0]   # drop aborted <1 s attempts
 
     def totals(rows, field):
         vals = [r.get(field) for r in rows if r.get(field) is not None]
@@ -407,12 +414,15 @@ def write_markdown(data):
         f"Idle baseline: **{idle_w} W** GPU over {idle.get('duration_s')} s "
         f"({idle.get('start')}) — used for idle-subtracted (\"net\") energy.\n"
     )
+    rapl_ok = any(r.get("cpu_available") for r in recs)
     lines.append(
-        "CPU package energy (Intel RAPL) is root-readable only on this kernel; "
-        "`cpu_wh` is `null` unless the user makes `/sys/class/powercap/intel-rapl*/energy_uj` "
-        "readable. Battery counters are sampled but read 0 W while on AC. "
-        "Whole-wall power is unavailable: screen, fans, SSD and RAM are not captured.\n"
-    )
+        "CPU package energy comes from Intel RAPL (`/sys/class/powercap/intel-rapl:0/"
+        "energy_uj`), which this kernel exposes to root only. It became readable during "
+        f"the night, so rows after that carry `cpu_wh` and earlier rows do not "
+        f"(currently RAPL is {'readable' if rapl_ok else 'NOT readable'}); the sampler "
+        "re-checks readability at the start of every run. Battery counters are sampled "
+        "but read 0 W while on AC (this laptop is on mains), and whole-wall power is "
+        "unavailable, so screen, fans, SSD and RAM are not captured.\n")
 
     def table(rows, title):
         lines.append(f"\n## {title}\n")
@@ -441,6 +451,13 @@ def write_markdown(data):
     lines.append("\n### Totals\n")
     lines.append(f"- Runs recorded: **{len(phase)}**")
     lines.append(f"- GPU energy, gross: **{totals(phase, 'gpu_wh'):.4f} Wh**")
+    aborted = [r for r in phase if r.get("aborted")]
+    if aborted:
+        lines.append(f"- of which wasted on aborted attempts: "
+                     f"**{totals(aborted, 'gpu_wh'):.4f} Wh** over "
+                     f"{sum(r.get('duration_s') or 0 for r in aborted) / 3600:.2f} h "
+                     f"({', '.join(str(r.get('run_id')) for r in aborted)}) — measured, "
+                     f"real energy, but it produced no checkpoint")
     if idle_w is not None:
         net = sum(_net(r.get("gpu_wh"), r.get("duration_s"), idle_w) or 0.0 for r in phase)
         lines.append(f"- GPU energy, idle-subtracted: **{net:.4f} Wh**")
@@ -454,7 +471,9 @@ def write_markdown(data):
                 f"{sum(r.get('duration_s') or 0 for r in rows) / 3600:.2f} h"
             )
 
-    # lineage: transitive closure over parent_run starting from the winner label
+    # lineage: transitive closure over parent_run starting from the winner label.
+    # A run id can appear more than once (an aborted attempt plus the real run), so
+    # every record with that id is collected and the duplicates are shown.
     winner = data.get("winner")
     if winner:
         chain, seen, stack = [], set(), [winner]
@@ -463,13 +482,20 @@ def write_markdown(data):
             if cur in seen or cur is None:
                 continue
             seen.add(cur)
-            row = next((r for r in recs if r.get("run_id") == cur), None)
-            if row:
-                chain.append(row)
-                stack.append(row.get("parent_run"))
+            rows = [r for r in recs if r.get("run_id") == cur]
+            # aborted attempts burned real energy but contributed nothing to the
+            # weights, so they are excluded from the lineage (and reported separately)
+            chain.extend([r for r in rows if not r.get("aborted")])
+            if rows:
+                stack.append(rows[-1].get("parent_run"))
         lines.append(f"\n### Winning model lineage ({winner})\n")
+        dupes = {}
+        for r in chain:
+            dupes[r.get("run_id")] = dupes.get(r.get("run_id"), 0) + 1
+        names = ", ".join(f"{k}" + (f" (x{v}, including aborted attempts)" if v > 1 else "")
+                          for k, v in dupes.items())
         lines.append("Runs contributing to the final checkpoint through `parent_run` links: "
-                     + ", ".join(r.get("run_id") for r in chain) + "\n")
+                     + names + "\n")
         lines.append(f"- Training energy of the lineage: {totals(chain, 'gpu_wh'):.4f} Wh GPU "
                      f"({sum(r.get('duration_s') or 0 for r in chain) / 3600:.2f} h)")
         if idle_w is not None:
@@ -530,9 +556,53 @@ def main(argv=None):
     ap.add_argument("--notes", default=None)
     ap.add_argument("--config", default=None)
     ap.add_argument("--reconcile", action="store_true", help="print ledger totals and their reconciliation")
+    ap.add_argument("--winner", default=None,
+                    help="record a run id as the winning model and regenerate the lineage")
+    ap.add_argument("--mark-aborted", dest="mark_aborted", default=None,
+                    help="run id whose shorter records are aborted attempts (keeps the longest)")
+    ap.add_argument("--estimate", action="append", default=[],
+                    help="'name:Wh:seconds' pre-logger run to show as a labelled ESTIMATE")
     ap.add_argument("cmd", nargs=argparse.REMAINDER)
     args = ap.parse_args(argv)
 
+    if args.mark_aborted:
+        data = _load_ledger()
+        rows = [r for r in data["records"] if r.get("run_id") == args.mark_aborted]
+        if rows:
+            keep = max(rows, key=lambda r: r.get("duration_s") or 0)
+            for r in rows:
+                r["aborted"] = r is not keep
+        _save_ledger(data)
+        print(f"marked {len(rows) - 1} shorter '{args.mark_aborted}' records as aborted")
+    if args.winner or args.estimate:
+        data = _load_ledger()
+        if args.winner:
+            data["winner"] = args.winner
+        if args.estimate:
+            ests = []
+            for spec in args.estimate:
+                name, wh, secs = spec.split(":")
+                ests.append({"run": name, "gpu_wh_estimate": float(wh),
+                             "seconds": float(secs)})
+            data["pre_logger_estimates"] = ests
+        _save_ledger(data)
+        if args.estimate:
+            with open(LEDGER_MD, "a") as fh:
+                fh.write("\n## ESTIMATE for runs from before the logger (NOT measured)\n\n")
+                fh.write("Earlier Stage 5 runs happened before `powerlog.py` existed. Their "
+                         "durations are known from `STAGE5-PROGRESS.md`; the mean power is "
+                         "taken from the comparable runs measured here and the products are "
+                         "listed for completeness. **These are estimates and are not mixed "
+                         "into any measured total.**\n\n")
+                fh.write("| run | duration (h) | mean W used | GPU Wh (estimate) |\n")
+                fh.write("|---|---|---|---|\n")
+                for e in ests:
+                    fh.write(f"| {e['run']} | {e['seconds'] / 3600:.2f} | "
+                             f"{e['gpu_wh_estimate'] * 3600 / max(1e-9, e['seconds']):.1f} | "
+                             f"{e['gpu_wh_estimate']:.2f} |\n")
+        print(f"ledger winner: {data.get('winner')}; estimates: "
+              f"{len(data.get('pre_logger_estimates') or [])}")
+        return 0
     if args.reconcile:
         data = _load_ledger()
         recs = [r for r in data["records"] if r.get("purpose") != "idle_baseline"]

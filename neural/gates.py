@@ -429,13 +429,28 @@ def g1_readout(packed, model, sidecar, table, K, H, windows, device="cuda"):
 
 
 def run_g1(packed, model, sidecar, table, K, H, device="cuda", steps=40,
-           seeds=(None,), n_ctx=300, split="val"):
+           seeds=(None,), n_ctx=300, split="val", ctxs=None, wins=None, swins=None):
+    """Gate G1.
+
+    ``ctxs`` / ``wins`` / ``swins`` let a caller supply frozen context and window
+    lists (Stage 5b's scorecard does, so that every candidate is measured on the
+    identical set); when omitted they are selected here from the split as before.
+    """
     _P_CACHE["P"] = global_prefix(table)
-    ctxs, n_ep = near_door_contexts(packed, sidecar, K, H, split=split)
+    if ctxs is None:
+        ctxs, n_ep = near_door_contexts(packed, sidecar, K, H, split=split)
+    else:
+        n_ep = len({c[0] for c in ctxs})
     ctxs = ctxs[:n_ctx]
-    wins = onset_windows(packed, table, K, split=split)[:n_ctx]
-    swins = sustained_windows(packed, table, K, split=split, steps=steps,
-                              n=min(n_ctx, 300))
+    if wins is None:
+        wins = onset_windows(packed, table, K, split=split)[:n_ctx]
+    else:
+        wins = wins[:n_ctx]
+    if swins is None:
+        swins = sustained_windows(packed, table, K, split=split, steps=steps,
+                                  n=min(n_ctx, 300))
+    else:
+        swins = swins[:min(n_ctx, 300)]
     out = {
         "n_contexts": len(ctxs), "n_context_episodes": n_ep,
         "n_onset_windows": len(wins), "n_sustained_windows": len(swins),
@@ -771,10 +786,17 @@ def _to_uint8_seq(t):
     return _u8(t)
 
 
-def run_g4(model, packed, K, device="cuda", steps=1000, warmup=50):
-    """The full per-frame loop at batch 1: fps, latency percentiles, peak VRAM."""
+def run_g4(model, packed, K, device="cuda", steps=1000, warmup=50, power=True):
+    """The full per-frame loop at batch 1: fps, latency percentiles, peak VRAM, power.
+
+    With ``power`` the loop is sampled at ~1 Hz (NVML + Intel RAPL) and the energy per
+    generated frame, the Wh per hour of play and the W per fps are reported alongside
+    the speed numbers, so a live run can be quoted in watts.
+    """
     import time
     from eval_harness import features_from_history
+    from powerlog import PowerLogger
+    plog = PowerLogger().start() if power else None
     ep, start = packed.enumerate_windows("val", K, 1, require_safe=True)
     e, s = int(ep[0]), int(start[0])
     rec = packed.episodes[e]
@@ -803,6 +825,7 @@ def run_g4(model, packed, K, device="cuda", steps=1000, warmup=50):
             if t >= warmup:
                 lat.append(dt * 1000.0)
     lat = np.array(lat)
+    pw = plog.stop() if plog else {}
     out = {
         "device": device, "steps": len(lat),
         "mean_ms": float(lat.mean()), "p95_ms": float(np.percentile(lat, 95)),
@@ -812,6 +835,19 @@ def run_g4(model, packed, K, device="cuda", steps=1000, warmup=50):
     }
     out["pass_fps_15"] = bool(out["fps_mean"] >= 15.0)
     out["pass_vram_3gb"] = bool(out["peak_vram_mb"] is None or out["peak_vram_mb"] < 3000)
+    if power:
+        out["power"] = {
+            "mean_gpu_w": pw.get("mean_gpu_w"), "peak_gpu_w": pw.get("peak_gpu_w"),
+            "mean_cpu_w": pw.get("mean_cpu_w"), "mean_gpu_temp_c": pw.get("mean_gpu_temp_c"),
+            "throttle_events": pw.get("throttle_events"),
+            "wh_per_hour_of_play": pw.get("mean_gpu_w") and round(
+                float(pw["mean_gpu_w"]) * 1.0, 3),
+            "j_per_frame": (round(float(pw["mean_gpu_w"]) / out["fps_mean"], 4)
+                            if pw.get("mean_gpu_w") and out["fps_mean"] else None),
+            "w_per_fps": (round(float(pw["mean_gpu_w"]) / out["fps_mean"], 4)
+                          if pw.get("mean_gpu_w") and out["fps_mean"] else None),
+            "cpu_available": pw.get("cpu_available"),
+        }
     return out
 
 

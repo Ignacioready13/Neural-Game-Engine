@@ -49,17 +49,44 @@ from steer import FEAT_DIM, SteeringModel, warp_translate
 N_FIXED_CH = 8
 
 
+class SelfAttnBlock(nn.Module):
+    """Single-head-less spatial self-attention at a low resolution.
+
+    A conv stack with a measured ~27 px receptive field cannot relate the two sides
+    of a corridor or the vanishing point to the near wall, which is what "is this
+    frame structurally consistent?" needs.  At the bottleneck (12x16 at 96x72) full
+    attention over all 192 tokens is cheap.
+    """
+
+    def __init__(self, ch: int, heads: int = 4):
+        super().__init__()
+        self.norm = nn.GroupNorm(8, ch)
+        self.attn = nn.MultiheadAttention(ch, heads, batch_first=True)
+        self.scale = nn.Parameter(torch.zeros(1))
+
+    def forward(self, x):
+        B, C, H, W = x.shape
+        t = self.norm(x).reshape(B, C, H * W).transpose(1, 2)
+        a, _ = self.attn(t, t, t, need_weights=False)
+        a = a.transpose(1, 2).reshape(B, C, H, W)
+        return x + torch.tanh(self.scale) * a
+
+
 class VelocityUNet(nn.Module):
-    """Small U-Net predicting the flow velocity, conditioned by channels + FiLM."""
+    """U-Net predicting the flow velocity, conditioned by channels + FiLM."""
 
     def __init__(self, in_ch: int, cond_dim: int, out_ch: int = 3, base: int = 32,
-                 mlp_width: int = 128):
+                 mlp_width: int = 128, attn: bool = False, attn_heads: int = 4):
         super().__init__()
         self.enc1 = ConvBlock(in_ch, base)
         self.down1 = nn.Conv2d(base, base * 2, 3, stride=2, padding=1, bias=False)
         self.enc2 = ConvBlock(base * 2, base * 2)
         self.down2 = nn.Conv2d(base * 2, base * 4, 3, stride=2, padding=1, bias=False)
         self.enc3 = ConvBlock(base * 4, base * 4)
+        # attention runs one level coarser than the bottleneck: at 96x72 that is a
+        # 9x12 grid, which is still fully global and costs 4x less memory than the
+        # bottleneck itself (the 18x24 attention matrix at batch 64 needs ~190 MB).
+        self.attn = SelfAttnBlock(base * 4, attn_heads) if attn else None
         self.up2 = nn.Sequential(
             nn.Upsample(scale_factor=2, mode="nearest"),
             nn.Conv2d(base * 4, base * 2, 3, padding=1, bias=False),
@@ -89,7 +116,12 @@ class VelocityUNet(nn.Module):
         g1, b1 = gamma[:, c3 + c2:], beta[:, c3 + c2:]
         e1 = self.enc1(x)
         e2 = self.enc2(self.down1(e1))
-        e3 = self._film(self.enc3(self.down2(e2)), g3, b3)
+        e3 = self.enc3(self.down2(e2))
+        if self.attn is not None:
+            h, w = e3.shape[-2:]
+            e3 = F.interpolate(self.attn(F.avg_pool2d(e3, 2)), size=(h, w),
+                               mode="nearest")
+        e3 = self._film(e3, g3, b3)
         d2 = self._film(self.dec2(torch.cat([self.up2(e3), e2], dim=1)), g2, b2)
         d1 = self._film(self.dec1(torch.cat([self.up1(d2), e1], dim=1)), g1, b1)
         return self.out(d1)
@@ -109,7 +141,8 @@ class FlowSteerModel(nn.Module):
     def __init__(self, K: int = 4, H: int = 10, base: int = 32, steps: int = 4,
                  cond_dim: int = 128, core_mode: str = "warp_resid",
                  freeze_core: bool = True, feat_dim: int = FEAT_DIM,
-                 noise_scale: float = 0.08):
+                 noise_scale: float = 0.08, attn: bool = False,
+                 net_base: int | None = None):
         super().__init__()
         self.K = K
         self.H = H
@@ -122,8 +155,12 @@ class FlowSteerModel(nn.Module):
         self.noise_scale = float(noise_scale)
         self.core = SteeringModel(K=K, H=H, base=base, mode=core_mode)
         # the conditioning vector is [click features, the readout's H increments, dx]
-        self.net = VelocityUNet(N_FIXED_CH, K * feat_dim + H + 1, base=base,
-                                mlp_width=cond_dim)
+        self.attn = bool(attn)
+        # ``base`` sizes the steering core (fixed by its checkpoint); ``net_base``
+        # sizes the denoiser, so the generator can grow without touching the core.
+        self.net_base = int(net_base or base)
+        self.net = VelocityUNet(N_FIXED_CH, K * feat_dim + H + 1, base=self.net_base,
+                                mlp_width=cond_dim, attn=self.attn)
         self.freeze_core = freeze_core
         if freeze_core:
             for p in self.core.parameters():
@@ -182,12 +219,40 @@ class FlowSteerModel(nn.Module):
 # Training helpers
 # --------------------------------------------------------------------------- #
 
+def revealed_mask(dx: torch.Tensor, H: int, W: int, edge_weight: float = 0.0,
+                  min_cols: int = 3):
+    """Spatial weight that is high where the warp had to invent content.
+
+    ``warp_translate`` uses ``padding_mode="border"``, so a content shift of ``dx`` px
+    repeats the border into the revealed strip: ``ceil(|dx|)`` columns at the leading
+    edge (the left edge for a rightward shift).  Those columns are exactly where the
+    real frame contains something the warp cannot have — the next doorway coming into
+    view.  Weighting the flow loss there (and, to a smaller extent, in a few columns
+    beyond) directs capacity at the new content instead of at re-fitting the part of
+    the frame the warp already reproduced.
+    """
+    B = dx.shape[0]
+    w = torch.ones(B, 1, H, W, device=dx.device, dtype=torch.float32)
+    if edge_weight <= 0:
+        return w
+    for i in range(B):
+        n = int(max(min_cols, abs(float(dx[i])) + 1.5))
+        n = min(n, W // 2)
+        if float(dx[i]) >= 0:
+            w[i, :, :, :n] = 1.0 + edge_weight
+        else:
+            w[i, :, :, W - n:] = 1.0 + edge_weight
+    # normalise so the overall loss scale does not change with the weight
+    return w / w.mean()
+
+
 def flow_training_loss(model: FlowSteerModel, context, features, target,
-                       noise_aug: float = 0.0, rng=None):
+                       noise_aug: float = 0.0, rng=None, edge_weight: float = 0.0):
     """One rectified-flow training step's loss (residual parameterisation).
 
     ``target`` is the true next frame [B,3,H,W] in [-1,1]. Returns
     ``(loss, parts)`` where parts carries the readout-supervision hand-off.
+    ``edge_weight`` up-weights the newly revealed strip (see :func:`revealed_mask`).
     """
     warped, dx, inc, sign_logit, cond = model.condition(context, features)
     r = target - warped
@@ -206,7 +271,11 @@ def flow_training_loss(model: FlowSteerModel, context, features, target,
     # *median* residual — ~0 — which collapses the generator to the motion-warped
     # last frame (measured: |residual| 0.02 against a real per-step change of 0.2,
     # i.e. no new content and no diversity).
-    l_flow = (v - v_target).pow(2).mean()
+    if edge_weight > 0:
+        m = revealed_mask(dx, r.shape[2], r.shape[3], edge_weight)
+        l_flow = ((v - v_target).pow(2) * m).mean()
+    else:
+        l_flow = (v - v_target).pow(2).mean()
     return l_flow, {"l_flow": float(l_flow.detach())}
 
 
@@ -219,6 +288,8 @@ def save_flow_checkpoint(path: str, model: FlowSteerModel, config: dict,
         "model_config": {
             "K": model.K, "H": model.H, "steps": model.steps,
             "base": config.get("base", 32), "cond_dim": config.get("cond_dim", 128),
+            "attn": bool(config.get("attn", False)),
+            "net_base": int(config.get("net_base") or config.get("base", 32)),
             "core_mode": config.get("core_mode", "warp_resid"),
             "freeze_core": config.get("freeze_core", True),
             "noise_scale": config.get("noise_scale", 0.08),

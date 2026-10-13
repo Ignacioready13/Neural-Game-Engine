@@ -7,6 +7,132 @@ and `engine/docs/CONTRACTS.md`. This file replaces the old `handoff.md`.
 
 ---
 
+## 2026-10-12 (evening) — Stage 6: the player, a model registry, and head-to-head replay
+
+**Asked.** Stage 6 (`stage6-prompt-player.txt`): turn the Stage 5 script into the
+project's real-time thin client — pick a model by name, a window you can actually see
+(resizable, fullscreen), the engine's click pulse, the engine's click semantics at the
+training rate, seed/restart controls, a HUD and help, session recording and replay so two
+models can be compared on the same clicks, a launcher and README instructions, and keep
+the live-session power accounting. The user waived the side-by-side view.
+
+**Built.** `neural/model_registry.py` + `models/registry.json` + `register_model.py`
+(**models are named after their internal training runs** — `flow96`, `flow96c`, `flow96d`
+— per the user's preference, with the Stage 5 letters `5a`/`5b` kept only as aliases;
+each name freezes a copy of its generator so a later run cannot move the name, and each
+entry carries a `selected` flag mirroring the frozen scorecard's `keep` verdicts in
+`eval_out/decision_*.json`); `neural/build_seeds.py` + `models/seeds.npz` (160 labelled
+seed clips, so the 18 GB packed set is not needed to play); `neural/play.sh` (the one
+command to start it); `neural/tests/test_stage6.py` (41 tests).
+`neural/play.py` rewritten as the real client: 20 Hz fixed timestep with
+drop accounting, resizable/fullscreen aspect-preserving letterbox, image-relative click
+mapping with clamping, the engine's fading click-pulse disc on every click, registry
+selection by flag and hotkey — `M`/`shift+M` cycle only the **selected** models, while
+any model (including rejected candidates and unregistered `runs/<name>/best.pt`) is
+playable by naming it — restarting from the same seed context and noise seed, seed/restart
+keys, HUD + help overlay (showing the internal model name, and `[not selected]` when
+relevant), screenshots, session record/replay (byte-identical on the same model, any model
+on the same clicks), display GIF recording, and power-ledger rows with J/frame and
+Wh/hour.
+`neural/powerlog.py`: added a non-blocking
+`PowerLogger.latest()` for the live HUD readout. `neural/README.md`: a "How to play and
+compare models" section at the top. `.gitignore`: the derived `models/**/*.pt`,
+`models/seeds.npz` and `models/recordings/` are not committed (the registry is).
+
+**Bugs found in the Stage 5 player and fixed.** The action tensor handed to the model was
+the current action repeated K times instead of the real click history; the click history
+grew unboundedly, so `steer.click_features` walked it in a Python loop every frame and a
+long session slowed down without bound; the seed's real click history was not used to
+restore the debounce state (so the first click was accepted even 1 frame after a real
+accepted click); the "pulse" was a full-height white bar rather than the engine's disc;
+clicks were mapped against the window instead of the image; `--headless --frames N`
+emitted the seed frame as frame 0. No engine, dataset, packer, loader or checkpoint was
+touched; git untouched.
+
+**Verification.** 41 new tests pass (97 passed overall on the final idle run; an earlier
+run on the busy machine had the pre-existing load-dependent
+`test_loader.py::test_throughput` failure — it imports only the untouched `dataset.py` and
+is recorded as load-sensitive in the Stage 4B/5b reports). Both registered models generate 500 paced frames at 20 Hz with **0
+dropped steps**: mean 4.29 / 6.18 ms, p95 4.65 / 7.51 ms, worst 5.25 / 8.37 ms against
+the 50 ms budget. Replaying a recording on the model that recorded it reproduces the
+frames bit for bit; the window was created, resized and toggled to fullscreen on the real
+3840x2400 desktop (windowed 1536x1152 default; fullscreen letterboxed 3168x2376) and
+under SDL's dummy driver. Feel, how the pulse looks in motion, and fullscreen behaviour
+on the user's compositor are for the user to judge.
+
+---
+
+## 2026-10-12 (overnight) — Stage 5b: structure, a frozen scorecard, and energy accounting
+
+**Asked.** Continue Stage 5 overnight (brief `stage5b-prompt-overnight.txt`): make the
+generator produce real structure (the user's playtest found no doorway ever appears and
+the hallway dissolves), tune it against a **scorecard frozen before any training**, and
+account for the energy of every run.
+
+**Built.** `neural/powerlog.py` (1 Hz NVML + Intel RAPL sampling, trapezoid Wh
+integration, one ledger record per run with `parent_run` lineage, `--baseline`,
+`--winner`, `--mark-aborted`, `--reconcile`); `neural/judges.py` (frozen opening
+detector, real-vs-generated classifier, radial power spectrum, multi-scale gradients,
+long-run health, opening-event counting); `neural/scorecard.py` (frozen sets, the
+detector, judge validation, per-candidate rows, the real-reveal one-step test);
+`neural/score_table.py` (candidate table + the pre-declared noise-aware keep/revert
+rule); `neural/diagnose_stage5b.py`; `neural/review_stage5b.py`;
+`neural/night_queue.sh`; `neural/zoom_table.py`; `neural/tests/test_stage5b.py`;
+`neural/eval_sets/scorecard_v1.json`; `neural/docs/{ENERGY-LEDGER.json,ENERGY-LEDGER.md,STAGE5B-REPORT.md}`.
+Additive edits to `flow.py` (low-resolution self-attention, `net_base`, edge-weighted
+reveal loss), `train_flow.py` (multi-seed checkpoint selection, `log_every`, a guard
+against confusing `--steps` with `--max-steps`), `gates.py` (frozen context/window
+lists, power in `run_g4`) and `play.py` (per-play-session power accounting, uint8-aware
+frame decoding). No engine, dataset, packer or loader change; git untouched.
+
+**Result.** The frozen detector showed the incumbent showed a walkable opening in
+**12.5 %** of its 300-step frames against 52.5 % of real. Winning candidate
+`runs/flow96c/best.pt` (denoiser 0.77 M → 3.19 M + global attention + a 4-step
+self-rollout curriculum, 19.6 min of training) reaches **1.015x real on a disjoint
+40-clip confirmation set — 8.6x the incumbent's share on the same clips** — and 0.758x
+on the test split, at 37.1 fps / 417 MB VRAM. A second candidate with an edge-weighted
+reveal loss improved the training loss and *every* one-step metric yet collapsed the
+300-step opening share to 0.000, and was rejected by the frozen rule: the clearest
+demonstration of why the scorecard was frozen first. Energy: 374.28 Wh GPU + 187.71 Wh
+CPU measured over 5.03 h, 32.13 Wh for the winner's training, plus ~359 Wh as a labelled
+estimate for the pre-logger Stage 5 runs.
+
+---
+
+## 2026-10-11 — Stage 5: the real generator (steering core, flow generator, gates, player)
+
+**Asked.** Build the actual neural game engine: from recent frames plus the click
+signal alone, generate the next frame over and over, steerably and stochastically,
+in real time (brief `stage5-prompt-generator.txt`).
+
+**Built.** `neural/steer.py` (click features, differentiable warp, direction
+readout, steering model), `neural/train_steer.py`, `neural/flow.py` (4-step
+rectified-flow generator on the warped-frame residual), `neural/train_flow.py`,
+`neural/shift_table.py` (shift + heading-derived targets), `neural/gates.py`
+(one-command G1-G4 runner), `neural/play.py` (interactive + scripted headless
+player), `neural/review_stage5.py`, `neural/tests/test_stage5.py`,
+`neural/docs/STAGE5-{PROGRESS,REPORT}.md`. Additive extensions to
+`eval_harness.py` (seed/feature-aware `rollout_v2`, `model_predict`) and
+`metrics.py` (sharpness, colour, diversity, collapse, frame-change metrics);
+`pygame-ce` added to `requirements.txt`/`.lock`. No engine, pilot, bulk_v1,
+packer or loader change; git untouched.
+
+**Result.** Steering core (64x48): readout direction sign accuracy 0.923 vs the
+truth and 0.898 vs the engine-rule ceiling of 0.954; counterfactual both-directions
+0.880 (near-door 0.878); 10-step shift ratio 0.780; 40-step sustained median ratio
+0.680 with no runaway; 60-step generated sharpness within 25% of real and
+per-channel colour within 0.003. Full numbers, the failure modes found (a
+scene-consistent click can be ignored; the denoiser cancels the warp given
+un-warped context; an L1 velocity loss collapses the sampler to the median; flow
+noise must match the residual scale; long-rollout phase-correlation aliasing), the
+speed/hardware measurements and the file list are in
+`neural/docs/STAGE5-REPORT.md`.
+
+**Verified.** `pytest` Stage 3/4/5 suites pass (27 Stage 5 tests incl. the N1/N2
+no-oracle checks); gates run with one documented command each.
+
+---
+
 ## 2026-10-11 — Stage 4B: bulk dataset, `mixture_v2`, packing, coverage
 
 **Asked.** Build the bulk training set the real model will use — tuned bot mixture,

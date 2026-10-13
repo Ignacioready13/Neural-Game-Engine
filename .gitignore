@@ -31,3 +31,11 @@ npm-debug.log*
 /neural/.pytest_cache/
 *.pyc
 
+# Stage 6 player artifacts: the frozen checkpoint copies, the seed cache and the
+# recorded sessions are all derived (and large), so they are not committed.
+# models/registry.json *is* committed; `register_model.py` re-creates the copies
+# from runs/, and `build_seeds.py` re-creates models/seeds.npz.
+/neural/models/*/*.pt
+/neural/models/seeds.npz
+/neural/models/recordings/
+

@@ -1,0 +1,80 @@
+{
+ "version": 2,
+ "models": [
+  {
+   "name": "flow96",
+   "aliases": [
+    "5a"
+   ],
+   "description": "Stage 5 generator (flow96) on steering core steer96",
+   "registered": "2026-10-12",
+   "selected": true,
+   "parent": null,
+   "checkpoint_source": "runs/flow96/best.pt",
+   "checkpoint": "models/flow96/generator.pt",
+   "checkpoint_sha256": "5a839ee823bca53b7603a069961f899ac988f2dba8451fd48eb76e6f2cb95f32",
+   "core": "runs/steer96/best.pt",
+   "resolution": [
+    96,
+    72
+   ],
+   "seed_packed": "data/bulk_v1_96x72",
+   "evals": [
+    "eval_out/score_v0.json",
+    "eval_out/decision_v0_vs_flow96c.json"
+   ],
+   "notes": "The Stage 5 model (called v0 in the Stage 5b scorecard, and 5a in the Stage 6 brief). 0.77M-param denoiser, 4-step flow, 8000 steps on bulk_v1 at 96x72 on top of the frozen steer96 core. Opening share 0.125 at 300 steps -- the model the Stage 5 brief complained about. Selected: it was the incumbent before the overnight run and was kept.",
+   "core_copy": "models/_shared/steer96.pt"
+  },
+  {
+   "name": "flow96c",
+   "aliases": [
+    "5b"
+   ],
+   "description": "Stage 5b overnight winner (flow96c) on steering core steer96",
+   "registered": "2026-10-12",
+   "selected": true,
+   "parent": "flow96",
+   "checkpoint_source": "runs/flow96c/best.pt",
+   "checkpoint": "models/flow96c/generator.pt",
+   "checkpoint_sha256": "859aa6d8ca11efda8edcb08cefe1e8514004545b6e3549046fbc2ff1acd09b4a",
+   "core": "runs/steer96/best.pt",
+   "resolution": [
+    96,
+    72
+   ],
+   "seed_packed": "data/bulk_v1_96x72",
+   "evals": [
+    "eval_out/score_flow96c.json",
+    "eval_out/score_flow96c_confirm.json",
+    "eval_out/score_flow96c_test.json",
+    "eval_out/decision_v0_vs_flow96c.json"
+   ],
+   "notes": "The Stage 5b overnight winner, kept by the frozen scorecard (eval_out/decision_v0_vs_flow96c.json, keep: true) and recorded as winner in docs/ENERGY-LEDGER.json. 3.19M-param denoiser (width 64 + self-attention on a 9x12 grid) with a 4-step self-rollout curriculum; 12000 steps trained at 64x48 on top of the frozen steer96 core, evaluated and played at 96x72 (fully convolutional). Opening share 1.015x real on the confirmation set, 0.758x on test.",
+   "core_copy": "models/_shared/steer96.pt"
+  },
+  {
+   "name": "flow96d",
+   "aliases": [],
+   "description": "Rejected overnight candidate (flow96d), edge-weighted reveal loss",
+   "registered": "2026-10-12",
+   "selected": false,
+   "parent": "flow96c",
+   "checkpoint_source": "runs/flow96d/best.pt",
+   "checkpoint": "models/flow96d/generator.pt",
+   "checkpoint_sha256": "bc99830855f902f8eeaa47e1bd0baeefc0c53061625c4e1059fc8b149cab02af",
+   "core": "runs/steer96/best.pt",
+   "resolution": [
+    96,
+    72
+   ],
+   "seed_packed": "data/bulk_v1_96x72",
+   "evals": [
+    "eval_out/score_flow96d.json",
+    "eval_out/decision_flow96c_vs_flow96d.json"
+   ],
+   "notes": "NOT SELECTED: the frozen scorecard rejected it (eval_out/decision_flow96c_vs_flow96d.json, keep: false). Better on every short-horizon signal (lower flow loss, lower one-step sampled L1, doorway-reveal ratio 0.914 vs 0.770) but a 300-step opening share of 0.000. Excluded from the M cycle; play it with --model flow96d to see the collapse by hand.",
+   "core_copy": "models/_shared/steer96.pt"
+  }
+ ]
+}
