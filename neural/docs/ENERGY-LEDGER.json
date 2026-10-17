@@ -1516,6 +1516,33 @@
    "j_per_frame": 0.9106,
    "wh_per_hour_of_play": 18.32,
    "w_per_fps": 0.9168
+  },
+  {
+   "start": "2026-10-16T18:25:51",
+   "end": "2026-10-16T18:26:31",
+   "duration_s": 40.0,
+   "samples": 38,
+   "gpu_wh": 0.1987,
+   "cpu_wh": null,
+   "mean_gpu_w": 18.17,
+   "peak_gpu_w": 18.63,
+   "mean_cpu_w": null,
+   "peak_cpu_w": null,
+   "mean_gpu_temp_c": 49.4,
+   "peak_gpu_temp_c": 50.0,
+   "gpu_energy_j": 715.3,
+   "n_frames": 800,
+   "parent_run": "player session, model flow96e",
+   "cpu_available": false,
+   "throttle_events": [],
+   "battery_measured": false,
+   "run_id": "play_flow96e",
+   "purpose": "play",
+   "notes": "player session, model flow96e",
+   "fps": 20.0,
+   "j_per_frame": 0.8941,
+   "wh_per_hour_of_play": 18.17,
+   "w_per_fps": 0.9085
   }
  ],
  "idle_baseline": {

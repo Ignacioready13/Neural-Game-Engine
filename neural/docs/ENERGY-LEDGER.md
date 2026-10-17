@@ -63,18 +63,19 @@ CPU package energy comes from Intel RAPL (`/sys/class/powercap/intel-rapl:0/ener
 | play_flow96e | play | player session, model flow96e | 30.9 | 0.1557 | 0.1208 | 18.06 | 18.55 | 50.3 | None | - |
 | play_flow96e | play | player session, model flow96e | 15.2 | None | None | None | None | None | None | - |
 | play_flow96e | play | player session, model flow96e | 56.9 | 0.2876 | 0.2233 | 18.32 | 18.98 | 44.7 | None | - |
+| play_flow96e | play | player session, model flow96e | 40.0 | 0.1987 | 0.1535 | 18.17 | 18.63 | 49.4 | None | - |
 
 ### Totals
 
-- Runs recorded: **52**
-- GPU energy, gross: **945.6076 Wh**
+- Runs recorded: **53**
+- GPU energy, gross: **945.8063 Wh**
 - of which wasted on aborted attempts: **18.6808 Wh** over 0.19 h (flow96c, flow96c) — measured, real energy, but it produced no checkpoint
-- GPU energy, idle-subtracted: **902.2426 Wh**
+- GPU energy, idle-subtracted: **902.3961 Wh**
 - CPU energy: 187.7064 Wh (0 if unavailable)
-- Wall-clock measured: **10.66 h**
+- Wall-clock measured: **10.67 h**
 - train: 11 runs, 688.141 Wh GPU, 6.71 h
 - eval: 24 runs, 255.439 Wh GPU, 3.83 h
-- play: 17 runs, 2.028 Wh GPU, 0.12 h
+- play: 18 runs, 2.227 Wh GPU, 0.13 h
 
 ### Winning model lineage (flow96c)
 

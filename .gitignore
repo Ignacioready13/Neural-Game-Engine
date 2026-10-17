@@ -40,7 +40,6 @@ npm-debug.log*
 
 # Working notes, the previous readmes and the reference PDF (see README.md).
 /local documentation/
-/info.md
 
 # One-off engine diagnostic scripts. They hard-code absolute machine paths and
 # read local, gitignored datasets; the maintained, published tests are the ones

@@ -1,6 +1,9 @@
 # NeuralGameEngine
 
 A first-person neural game engine styled after the Backrooms, fully implemented by DeepSeek and trained on a single NVIDIA 5070 laptop GPU.
+I explain my engine design in info.md; all other documentation is AI-generated.
+
+![the neural game engine](demo.gif)
 
 Two halves to this project:
 
