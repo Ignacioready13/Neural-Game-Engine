@@ -31,11 +31,33 @@ npm-debug.log*
 /neural/.pytest_cache/
 *.pyc
 
-# Stage 6 player artifacts: the frozen checkpoint copies, the seed cache and the
-# recorded sessions are all derived (and large), so they are not committed.
-# models/registry.json *is* committed; `register_model.py` re-creates the copies
-# from runs/, and `build_seeds.py` re-creates models/seeds.npz.
+# ---------------------------------------------------------------------------
+# Local-only working files (kept on disk, deliberately never published)
+# ---------------------------------------------------------------------------
+
+# The build/research briefs that drove each stage.
+/prompts/
+
+# Working notes, the previous readmes and the reference PDF (see README.md).
+/local documentation/
+/info.md
+
+# One-off engine diagnostic scripts. They hard-code absolute machine paths and
+# read local, gitignored datasets; the maintained, published tests are the ones
+# in engine/tests/ and neural/tests/.
+/engine/temporary_scripts/
+
+# ---------------------------------------------------------------------------
+# Neural checkpoints
+#
+# The repository ships exactly one model: the frozen `flow96e` generator (the
+# Stage 5c pick), the steering core it was built on, and the seed-context cache
+# the player starts from. Everything else in models/registry.json is lineage --
+# the entries stay, because they document where flow96e came from, but their
+# checkpoints are local-only exactly like runs/.
+# ---------------------------------------------------------------------------
 /neural/models/*/*.pt
-/neural/models/seeds.npz
+!/neural/models/flow96e/generator.pt
+!/neural/models/_shared/steer96.pt
 /neural/models/recordings/
 

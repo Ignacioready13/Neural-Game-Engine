@@ -432,11 +432,11 @@ def test_catalog_resolves_names_aliases_and_bare_runs(tmp_path, monkeypatch):
 
     # an unregistered run directory is playable by name
     monkeypatch.setattr(registry, "RUNS_DIR", str(tmp_path))
-    (tmp_path / "flow96e").mkdir()
-    (tmp_path / "flow96e" / "best.pt").write_bytes(b"x")
-    info = cat.info("flow96e")
-    assert info["kind"] == "run" and info["name"] == "flow96e"
-    assert info["path"].endswith(os.path.join("flow96e", "best.pt"))
+    (tmp_path / "flow96f").mkdir()
+    (tmp_path / "flow96f" / "best.pt").write_bytes(b"x")
+    info = cat.info("flow96f")
+    assert info["kind"] == "run" and info["name"] == "flow96f"
+    assert info["path"].endswith(os.path.join("flow96f", "best.pt"))
     with pytest.raises(registry.RegistryError) as e:
         cat.info("flow96z")
     assert "flow96c" in str(e.value) and "does not exist" in str(e.value)

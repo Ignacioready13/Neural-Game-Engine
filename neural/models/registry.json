@@ -75,6 +75,46 @@
    ],
    "notes": "NOT SELECTED: the frozen scorecard rejected it (eval_out/decision_flow96c_vs_flow96d.json, keep: false). Better on every short-horizon signal (lower flow loss, lower one-step sampled L1, doorway-reveal ratio 0.914 vs 0.770) but a 300-step opening share of 0.000. Excluded from the M cycle; play it with --model flow96d to see the collapse by hand.",
    "core_copy": "models/_shared/steer96.pt"
+  },
+  {
+   "name": "flow96e_final",
+   "aliases": [],
+   "description": "flow96e_final: Stage 5c coherence run (flow96e, 148385 steps, GameNGen-style noise-conditioned frame conditioning, EMA, time-budgeted)",
+   "registered": "2026-10-13",
+   "selected": false,
+   "parent": "flow96c",
+   "checkpoint_source": "runs/flow96e/final.pt",
+   "checkpoint": "models/flow96e_final/generator.pt",
+   "checkpoint_sha256": "a42f3fd46c933fe5ab9a20389a5869f897459fdde2eb891601876eb7e5a38a0d",
+   "core": "runs/steer96/best.pt",
+   "resolution": [
+    96,
+    72
+   ],
+   "seed_packed": "data/bulk_v1_96x72",
+   "evals": [],
+   "notes": "{\"health\": {\"frame_change\": 7.09, \"hf_ratio\": 0.518, \"contrast\": 33.7, \"luma_mean\": 82.8}, \"val_sample_l1\": 0.1745}",
+   "core_copy": "models/_shared/steer96.pt"
+  },
+  {
+   "name": "flow96e",
+   "aliases": [],
+   "description": "flow96e: Stage 5c coherence pick -- snapshots/snap_0062316.pt (step 62316) of run flow96e, the healthiest EMA snapshot (3/3 val contexts inside the 4.0d band, closest to real time statistics); see STAGE5C-REPORT.md",
+   "registered": "2026-10-13",
+   "selected": false,
+   "parent": "flow96c",
+   "checkpoint_source": "runs/flow96e/snapshots/snap_0062316.pt",
+   "checkpoint": "models/flow96e/generator.pt",
+   "checkpoint_sha256": "bfec4bf5d2abe0b4c28ed2824302194fedf8becd92aa5374164a184d1ea59e61",
+   "core": "runs/steer96/best.pt",
+   "resolution": [
+    96,
+    72
+   ],
+   "seed_packed": "data/bulk_v1_96x72",
+   "evals": [],
+   "notes": "{\"in_band\": \"3/3\", \"health\": {\"frame_change\": 8.386, \"hf_ratio\": 0.752, \"contrast\": 43.1, \"luma_mean\": 154.2}}",
+   "core_copy": "models/_shared/steer96.pt"
   }
  ]
 }

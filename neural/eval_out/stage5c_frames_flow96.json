@@ -1,0 +1,22 @@
+{
+ "model": "flow96",
+ "checkpoint": "models/flow96/generator.pt",
+ "frames": 500,
+ "paced": true,
+ "target_fps": 20.0,
+ "warmup_frames": 5,
+ "mean_ms": 4.087,
+ "p95_ms": 4.389,
+ "worst_ms": 5.327,
+ "implied_fps": 244.66,
+ "budget_ms": 50.0,
+ "dropped_steps": 0,
+ "kept_up": true,
+ "seed_context": "val ep1455@47",
+ "noise_seed": 0,
+ "resolution": [
+  96,
+  72
+ ],
+ "click_script": ""
+}

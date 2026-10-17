@@ -1,0 +1,11 @@
+{
+ "pick": {
+  "path": "runs/flow96e/best.pt",
+  "step": 1000000000,
+  "reason": "latest snapshot passing the band"
+ },
+ "register": {
+  "rc": 0,
+  "out": "registered flow96e: flow96e: Stage 5c coherence pick -- best.pt (step 1000000000) of run flow96e, chosen as the latest snapshot inside the 4.0d health band (vision judge dropped, see STAGE5C-REPORT.md 4.0c)\n  checkpoint : models/flow96e/generator.pt  (sha256 08a1bf909e2d...)\n  core       : models/_shared/steer96.pt\n  resolution : 96x72\n  selected   : False  (kept out of the M cycle, playable by name)\n  play it    : ./play.sh --model flow96e"
+ }
+}

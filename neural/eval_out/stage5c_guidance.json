@@ -1,0 +1,38 @@
+{
+ "model": "flow96e",
+ "weights": {
+  "1.0": {
+   "health": {
+    "frame_change": 8.39078140258789,
+    "hf_ratio": 0.7469391489054301,
+    "contrast": 43.1346804300944,
+    "luma_mean": 154.1859130859375,
+    "near_black": 0.0
+   },
+   "n_in_band": 3,
+   "n_contexts": 3,
+   "ms_per_frame": 3.6235141200045793
+  },
+  "1.5": {
+   "health": {
+    "frame_change": 13.219050089518229,
+    "hf_ratio": 0.7827512283322511,
+    "contrast": 37.05341657002767,
+    "luma_mean": 123.26358540852864,
+    "near_black": 0.0
+   },
+   "n_in_band": 2,
+   "n_contexts": 3,
+   "ms_per_frame": 8.579978739993143
+  }
+ },
+ "real": {
+  "n_frames": 2400,
+  "frame_change": 4.599533557891846,
+  "luma_mean": 100.73245239257812,
+  "contrast": 51.15188980102539,
+  "near_black": 0.0,
+  "hf_energy": 9.540374755859375,
+  "hf_ratio": 1.0
+ }
+}

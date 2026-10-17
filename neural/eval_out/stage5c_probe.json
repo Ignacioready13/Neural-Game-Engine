@@ -1,0 +1,229 @@
+{
+ "steps": 300,
+ "real": {
+  "n_frames": 2400,
+  "frame_change": 4.599533557891846,
+  "luma_mean": 100.73245239257812,
+  "contrast": 51.15188980102539,
+  "near_black": 0.0,
+  "hf_energy": 9.540374755859375,
+  "hf_ratio": 1.0
+ },
+ "seeds": [
+  "val ep1391@54",
+  "val ep1384@56",
+  "val ep1414@2"
+ ],
+ "models": {
+  "flow96": {
+   "frozen_noise": {},
+   "rho": {
+    "0.0_live": {
+     "frame_change": 14.261474609375,
+     "luma_mean": 140.1279271443685,
+     "contrast": 42.64339701334635,
+     "near_black": 0.0,
+     "hf_ratio": 1.1483443771278563
+    },
+    "0.0": {
+     "frame_change": 14.261474609375,
+     "luma_mean": 140.1279271443685,
+     "contrast": 42.64339701334635,
+     "near_black": 0.0,
+     "hf_ratio": 1.1483443771278563
+    },
+    "0.9": {
+     "frame_change": 3.722419182459513,
+     "luma_mean": 123.9437993367513,
+     "contrast": 53.89125061035156,
+     "near_black": 0.0,
+     "hf_ratio": 0.9909929298922969
+    },
+    "0.99": {
+     "frame_change": 1.8915640115737915,
+     "luma_mean": 155.73291015625,
+     "contrast": 58.99330393473307,
+     "near_black": 0.0,
+     "hf_ratio": 1.734632385321003
+    },
+    "1.0": {
+     "frame_change": 0.40421061714490253,
+     "luma_mean": 178.4221954345703,
+     "contrast": 78.0962905883789,
+     "near_black": 0.0,
+     "hf_ratio": 2.7264148478925896
+    }
+   },
+   "real_click_health": {
+    "val ep1391@54": {
+     "n_frames": 300,
+     "frame_change": 7.254902362823486,
+     "luma_mean": 163.2254638671875,
+     "contrast": 55.212100982666016,
+     "near_black": 0.0,
+     "hf_energy": 6.593379974365234,
+     "hf_ratio": 0.6911028280430812
+    },
+    "val ep1384@56": {
+     "n_frames": 300,
+     "frame_change": 13.197502136230469,
+     "luma_mean": 145.835205078125,
+     "contrast": 42.694580078125,
+     "near_black": 0.0,
+     "hf_energy": 10.781564712524414,
+     "hf_ratio": 1.1300986584308694
+    },
+    "val ep1414@2": {
+     "n_frames": 300,
+     "frame_change": 4.660394191741943,
+     "luma_mean": 66.4549560546875,
+     "contrast": 37.60483932495117,
+     "near_black": 0.0,
+     "hf_energy": 3.6730024814605713,
+     "hf_ratio": 0.3849956186684111
+    }
+   },
+   "bitexact_r0": true
+  },
+  "flow96c": {
+   "frozen_noise": {},
+   "rho": {
+    "0.0_live": {
+     "frame_change": 37.112630208333336,
+     "luma_mean": 178.81632486979166,
+     "contrast": 38.261207580566406,
+     "near_black": 0.0,
+     "hf_ratio": 2.7004956512560017
+    },
+    "0.0": {
+     "frame_change": 37.112630208333336,
+     "luma_mean": 178.81632486979166,
+     "contrast": 38.261207580566406,
+     "near_black": 0.0,
+     "hf_ratio": 2.7004956512560017
+    },
+    "0.9": {
+     "frame_change": 3.5450358788172402,
+     "luma_mean": 82.6680367787679,
+     "contrast": 30.302022298177082,
+     "near_black": 0.0,
+     "hf_ratio": 1.0653070310825636
+    },
+    "0.99": {
+     "frame_change": 0.9265396197636923,
+     "luma_mean": 45.56529680887858,
+     "contrast": 38.15805308024088,
+     "near_black": 0.0,
+     "hf_ratio": 1.0948738053882414
+    },
+    "1.0": {
+     "frame_change": 0.1863043655951818,
+     "luma_mean": 38.337050120035805,
+     "contrast": 40.47389348347982,
+     "near_black": 0.0,
+     "hf_ratio": 1.0141354838744074
+    }
+   },
+   "real_click_health": {
+    "val ep1391@54": {
+     "n_frames": 300,
+     "frame_change": 34.54288101196289,
+     "luma_mean": 178.61997985839844,
+     "contrast": 38.18834686279297,
+     "near_black": 0.0,
+     "hf_energy": 23.65638542175293,
+     "hf_ratio": 2.479607565439081
+    },
+    "val ep1384@56": {
+     "n_frames": 300,
+     "frame_change": 35.16535949707031,
+     "luma_mean": 178.01828002929688,
+     "contrast": 38.24286651611328,
+     "near_black": 0.0,
+     "hf_energy": 24.062679290771484,
+     "hf_ratio": 2.5221943483921323
+    },
+    "val ep1414@2": {
+     "n_frames": 300,
+     "frame_change": 38.935035705566406,
+     "luma_mean": 174.77670288085938,
+     "contrast": 38.713783264160156,
+     "near_black": 0.0,
+     "hf_energy": 28.955530166625977,
+     "hf_ratio": 3.035051652330792
+    }
+   },
+   "bitexact_r0": true
+  },
+  "flow96d": {
+   "frozen_noise": {},
+   "rho": {
+    "0.0_live": {
+     "frame_change": 13.827744801839193,
+     "luma_mean": 172.04339090983072,
+     "contrast": 21.443267822265625,
+     "near_black": 0.0,
+     "hf_ratio": 1.6723539342884897
+    },
+    "0.0": {
+     "frame_change": 13.827744801839193,
+     "luma_mean": 172.04339090983072,
+     "contrast": 21.443267822265625,
+     "near_black": 0.0,
+     "hf_ratio": 1.6723539342884897
+    },
+    "0.9": {
+     "frame_change": 3.5560320218404136,
+     "luma_mean": 196.44834899902344,
+     "contrast": 24.184350331624348,
+     "near_black": 0.0,
+     "hf_ratio": 1.700334712541464
+    },
+    "0.99": {
+     "frame_change": 1.592136065165202,
+     "luma_mean": 184.81876118977866,
+     "contrast": 32.18353398640951,
+     "near_black": 0.0,
+     "hf_ratio": 1.7687058101608244
+    },
+    "1.0": {
+     "frame_change": 0.4349328676859538,
+     "luma_mean": 149.91223653157553,
+     "contrast": 25.53951644897461,
+     "near_black": 0.0,
+     "hf_ratio": 3.1652632677476418
+    }
+   },
+   "real_click_health": {
+    "val ep1391@54": {
+     "n_frames": 300,
+     "frame_change": 16.940221786499023,
+     "luma_mean": 161.79383850097656,
+     "contrast": 24.4659423828125,
+     "near_black": 0.0,
+     "hf_energy": 15.992469787597656,
+     "hf_ratio": 1.676293667371465
+    },
+    "val ep1384@56": {
+     "n_frames": 300,
+     "frame_change": 16.077905654907227,
+     "luma_mean": 171.490234375,
+     "contrast": 21.913257598876953,
+     "near_black": 0.0,
+     "hf_energy": 16.110088348388672,
+     "hf_ratio": 1.6886221726766448
+    },
+    "val ep1414@2": {
+     "n_frames": 300,
+     "frame_change": 12.01693344116211,
+     "luma_mean": 202.85629272460938,
+     "contrast": 22.015771865844727,
+     "near_black": 0.0,
+     "hf_energy": 16.59265899658203,
+     "hf_ratio": 1.739204111074503
+    }
+   },
+   "bitexact_r0": true
+  }
+ }
+}

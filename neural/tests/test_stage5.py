@@ -143,10 +143,21 @@ def test_seed_diversity_zero_when_identical():
 # --------------------------------------------------------------------------- #
 
 def test_inference_models_accept_only_frames_and_clicks():
-    """The inference entry points take frames, click signals and a seed — nothing else."""
+    """The inference entry points take frames, click signals and a seed — nothing else.
+
+    Stage 5c added three *sampler-control* keywords (not extra data about the world):
+    ``noise`` (an explicit unit-variance flow-noise tensor, for temporally correlated
+    sampling), ``level`` (which noise bucket the frame conditioning is at — 0 = clean —
+    as trained by the noise-augmented context of ``flow.flow_training_loss``) and
+    ``guidance`` (the classifier-free-guidance weight on the frame conditioning). None
+    of them carries engine, sidecar or future information; ``level=0, guidance=1`` and
+    ``noise=None`` is exactly the Stage 5/6 behaviour, which the bit-identity tests in
+    ``test_stage5c.py`` pin for both registered models.
+    """
     import flow
     from steer import SteeringModel
-    allowed = {"self", "context", "action", "features", "seed", "return_shift"}
+    allowed = {"self", "context", "action", "features", "seed", "return_shift",
+               "noise", "level", "guidance"}
     for cls in (SteeringModel, flow.FlowSteerModel):
         params = set(inspect.signature(cls.predict).parameters)
         assert params <= allowed, (cls.__name__, params - allowed)

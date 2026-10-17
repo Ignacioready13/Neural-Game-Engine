@@ -51,18 +51,30 @@ CPU package energy comes from Intel RAPL (`/sys/class/powercap/intel-rapl:0/ener
 | play_flow96c | play | player session, model flow96c | 23.8 | 0.1055 | 0.0786 | 16.1 | 16.68 | 45.2 | None | sw_power_cap |
 | play_flow96d | play | player session, model flow96d | 11.4 | 0.0521 | 0.0392 | 16.42 | 17.53 | 43.0 | None | sw_power_cap |
 | play_flow96d | play | player session, model flow96d | 10.0 | 0.0431 | 0.0318 | 16.64 | 17.5 | 44.6 | None | sw_power_cap |
+| flow96e_pilot | train | flow96c | 1329.8 | 37.0396 | 35.5362 | 100.22 | 119.25 | 82.9 | None | sw_power_cap,sw_thermal_slowdown |
+| flow96e_pilot_small | train | flow96c | 1328.5 | 37.5873 | 36.0854 | 101.85 | 114.3 | 83.3 | None | sw_power_cap |
+| flow96e | train | flow96c | 17169.6 | 494.3502 | 474.939 | 103.65 | 122.72 | 83.4 | None | sw_power_cap |
+| flow96e_finish_health | eval | flow96e | 18.5 | 0.322 | 0.3011 | 62.55 | 81.73 | 60.1 | None | - |
+| play_flow96e | play | player session, model flow96e | 97.8 | 0.4977 | 0.3871 | 18.46 | 18.95 | 51.2 | None | - |
+| play_flow96e | play | player session, model flow96e | 29.9 | 0.1498 | 0.116 | 18.06 | 18.53 | 48.0 | None | - |
+| play_flow96e | play | player session, model flow96e | 19.9 | 0.0943 | 0.0718 | 17.76 | 18.37 | 48.8 | None | - |
+| play_flow96e | play | player session, model flow96e | 15.5 | 0.0741 | 0.0566 | 17.89 | 18.42 | 48.9 | None | - |
+| play_flow96e | play | player session, model flow96e | 30.9 | 0.1503 | 0.1154 | 17.55 | 18.36 | 49.9 | None | - |
+| play_flow96e | play | player session, model flow96e | 30.9 | 0.1557 | 0.1208 | 18.06 | 18.55 | 50.3 | None | - |
+| play_flow96e | play | player session, model flow96e | 15.2 | None | None | None | None | None | None | - |
+| play_flow96e | play | player session, model flow96e | 56.9 | 0.2876 | 0.2233 | 18.32 | 18.98 | 44.7 | None | - |
 
 ### Totals
 
-- Runs recorded: **40**
-- GPU energy, gross: **374.8990 Wh**
+- Runs recorded: **52**
+- GPU energy, gross: **945.6076 Wh**
 - of which wasted on aborted attempts: **18.6808 Wh** over 0.19 h (flow96c, flow96c) — measured, real energy, but it produced no checkpoint
-- GPU energy, idle-subtracted: **354.2901 Wh**
+- GPU energy, idle-subtracted: **902.2426 Wh**
 - CPU energy: 187.7064 Wh (0 if unavailable)
-- Wall-clock measured: **5.06 h**
-- train: 8 runs, 119.163 Wh GPU, 1.21 h
-- eval: 23 runs, 255.117 Wh GPU, 3.82 h
-- play: 9 runs, 0.618 Wh GPU, 0.04 h
+- Wall-clock measured: **10.66 h**
+- train: 11 runs, 688.141 Wh GPU, 6.71 h
+- eval: 24 runs, 255.439 Wh GPU, 3.83 h
+- play: 17 runs, 2.028 Wh GPU, 0.12 h
 
 ### Winning model lineage (flow96c)
 

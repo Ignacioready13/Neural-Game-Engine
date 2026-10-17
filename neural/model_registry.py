@@ -56,7 +56,7 @@ DEFAULT_SEEDS = os.path.join(MODELS_DIR, "seeds.npz")
 RECORDINGS_DIR = os.path.join(MODELS_DIR, "recordings")
 RUNS_DIR = os.path.join(HERE, "runs")
 
-NAME_RE = re.compile(r"^[a-z][a-z0-9]{0,23}$")
+NAME_RE = re.compile(r"^[a-z][a-z0-9_]{0,23}$")
 
 # The registry's own schema version; bump only on an incompatible change.
 SCHEMA_VERSION = 2
@@ -297,24 +297,35 @@ def format_table(reg: dict | None = None, root: str = HERE) -> str:
     rows = entries(reg, selected_only=False)
     if not rows:
         return "no models registered yet"
+    status: dict[str, str] = {}
+    for r in rows:
+        try:
+            _, kind = checkpoint_for(r, root)
+            status[r["name"]] = "ready" if kind == "copy" else "source!"
+        except RegistryError:
+            status[r["name"]] = "MISSING"
     w = max(len(r["name"]) for r in rows)
     a = max([len(", ".join(r.get("aliases") or [])) for r in rows] + [0])
     out = [f"{'name'.ljust(w)}  {'aliases'.ljust(a)}  res    status    description"]
     for r in rows:
-        try:
-            _, kind = checkpoint_for(r, root)
-            status = "ready" if kind == "copy" else "source!"
-        except RegistryError:
-            status = "MISSING"
-        if not r.get("selected") and status != "MISSING":
-            status += "+"
+        st = status[r["name"]]
+        if not r.get("selected") and st != "MISSING":
+            st += "+"
         out.append(f"{r['name'].ljust(w)}  "
                    f"{', '.join(r.get('aliases') or []).ljust(a)}  "
-                   f"{resolution(r)[0]}x{resolution(r)[1]}  {status:<9} "
+                   f"{resolution(r)[0]}x{resolution(r)[1]}  {st:<9} "
                    f"{r.get('description', '')}")
+    here = [r["name"] for r in rows if status[r["name"]] != "MISSING"]
+    kept = [r["name"] for r in rows
+            if r.get("selected") and status[r["name"]] != "MISSING"]
     out.append("")
-    out.append("selected (the M key cycles these, and one is the default): "
-               + ", ".join(names(reg, selected_only=True)))
-    out.append("a + marks a model that was rejected/not promoted; it is still playable "
-               "with --model <name>")
+    if kept:
+        out.append("selected (the M key cycles these, and one is the default): "
+                   + ", ".join(kept))
+    else:
+        out.append("no selected model is in this checkout; the default is the newest "
+                   "one that is" + (f": {here[-1]}" if here else ""))
+    out.append("MISSING means the checkpoint is not in this checkout, and a + marks a "
+               "model that was rejected/not promoted; either is still playable with "
+               "--model <name>")
     return "\n".join(out)

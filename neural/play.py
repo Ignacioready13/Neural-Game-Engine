@@ -388,11 +388,31 @@ class Catalog:
         self.reg = reg if reg is not None else registry.load()
         self._cache: dict[str, dict] = {}
 
+    def playable(self, name: str) -> bool:
+        """True when ``name`` resolves to a checkpoint that is present in this checkout.
+
+        The registry is provenance and lists every revision, but a checkout only ships
+        the checkpoints it actually carries (this repository ships ``flow96e``), so a
+        registered name can be unplayable here.
+        """
+        try:
+            return os.path.exists(self.info(name)["path"])
+        except registry.RegistryError:
+            return False
+
     def cycle(self) -> list[str]:
-        """The names the ``M`` key cycles: registered, selected models only."""
-        return registry.names(self.reg, selected_only=True)
+        """The names the ``M`` key cycles: selected models present in this checkout."""
+        return [n for n in registry.names(self.reg, selected_only=True)
+                if self.playable(n)]
 
     def default(self) -> str:
+        """The newest *playable* selected model, else the newest playable one."""
+        cycle = self.cycle()
+        if cycle:
+            return cycle[-1]
+        for name in reversed(registry.names(self.reg)):
+            if self.playable(name):
+                return name
         return registry.newest(self.reg)["name"]
 
     def info(self, name: str) -> dict:
@@ -433,7 +453,8 @@ class Player:
     """Generates frames in closed loop from a seed context + click signals."""
 
     def __init__(self, checkpoint: str, seeds: SeedBank, device: str | None = None,
-                 hist_extra: int = 8, name: str | None = None, split: str | None = None):
+                 hist_extra: int = 8, name: str | None = None, split: str | None = None,
+                 noise_corr: float = 0.0):
         from gates import load_model
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self.model, payload = load_model(checkpoint, self.device)
@@ -449,6 +470,12 @@ class Player:
         self.frame_index = 0
         self.session_frames = 0
         self.seed: Seed | None = None
+        # Stage 5c, additive: 0.0 (the default) is exactly today's fresh independent
+        # noise every frame. > 0 makes the flow noise an AR(1) process,
+        # noise_f = rho*noise_{f-1} + sqrt(1-rho^2)*fresh_f, still a deterministic
+        # function of (noise_seed, f) so replay stays exact.
+        self.noise_corr = float(noise_corr or 0.0)
+        self._noise_z = None
 
     # -- power accounting -------------------------------------------------- #
 
@@ -496,6 +523,7 @@ class Player:
     def reset(self, seed: Seed | None = None, episode: int | None = None,
               start: int | None = None):
         """Seed the run with K real frames (a random early-episode clip by default)."""
+        self._noise_z = None
         if seed is None:
             if episode is None or start is None:
                 seed = self.seeds.pick(self.rng, self.prefer_split)
@@ -550,12 +578,27 @@ class Player:
         # the action tensor is the real click history, not the current action repeated
         a = torch.from_numpy(np.ascontiguousarray(
             np.stack(self.hist[-self.K:])))[None].to(self.device)
-        out = model_predict(self.model, ctx, a, feats, seed, return_shift=True)
+        if self.noise_corr > 0.0 and hasattr(self.model, "predict"):
+            noise = self._correlated_noise(seed)
+            out = self.model.predict(ctx, a, features=feats, seed=seed, noise=noise)
+        else:
+            out = model_predict(self.model, ctx, a, feats, seed, return_shift=True)
         nxt = out[0] if isinstance(out, tuple) else out
         self.frames = torch.cat([self.frames, nxt], dim=0)
         self.frame_index += 1
         self.session_frames += 1
         return nxt[0]
+
+    def _correlated_noise(self, seed: int | None):
+        """AR(1) flow noise for this frame; deterministic in (noise_seed, frame)."""
+        h, w = self.frames.shape[-2:]
+        g = torch.Generator(device="cpu").manual_seed(int(seed or 0))
+        fresh = torch.randn((1, 3, h, w), generator=g)
+        rho = self.noise_corr
+        z = (fresh if self._noise_z is None
+             else rho * self._noise_z + (1.0 - rho * rho) ** 0.5 * fresh)
+        self._noise_z = z
+        return z
 
     def click(self, x: float, frame: int | None = None) -> bool:
         """Offer a click; returns True if it moved the held signal."""
@@ -699,7 +742,8 @@ class Client:
             print(f"[play] loading model {name} ...", flush=True)
             self.players[name] = Player(info["path"], self.seeds, device=self.args.device,
                                         hist_extra=self.args.hist_extra, name=name,
-                                        split=self.args.split)
+                                        split=self.args.split,
+                                        noise_corr=float(getattr(self.args, "noise_corr", 0.0)))
         return self.players[name]
 
     @property
@@ -1505,6 +1549,10 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--split", default="val", help="split to draw random seeds from")
     s.add_argument("--seed-context", dest="seed_context", default=None,
                    help="exact seed clip as EPISODE:START")
+    s.add_argument("--noise-corr", dest="noise_corr", type=float, default=0.0,
+                   help="AR(1) correlation of the flow noise across frames: 0.0 (the "
+                        "default) is fresh independent noise every frame, as before; "
+                        "try 0.9 to stabilise a rollout")
     s.add_argument("--noise-seed", dest="noise_seed", type=int, default=0,
                    help="base seed for the generator noise (frame f uses noise_seed+f)")
     w = ap.add_argument_group("window")
@@ -1637,7 +1685,8 @@ def main(argv=None) -> int:
             return 2
 
     player = Player(ckpt, seeds, device=args.device, hist_extra=args.hist_extra,
-                    name=name, split=args.split)
+                    name=name, split=args.split,
+                    noise_corr=float(getattr(args, "noise_corr", 0.0)))
 
     if args.headless:
         if args.replay:

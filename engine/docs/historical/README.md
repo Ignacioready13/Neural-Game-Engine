@@ -10,4 +10,4 @@ The current sources of truth are, in order:
 1. the code in `engine/` and `engine/config/config.ts`;
 2. [`../DATASET-SCHEMA.md`](../DATASET-SCHEMA.md) and
    [`../CONTRACTS.md`](../CONTRACTS.md);
-3. the root `README.md` and `CHANGES-LOG.md`.
+3. the root `README.md` and the stage reports under `engine/docs/`.

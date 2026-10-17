@@ -1,0 +1,168 @@
+{
+ "real": {
+  "n_frames": 2400,
+  "frame_change": 4.599533557891846,
+  "luma_mean": 100.73245239257812,
+  "contrast": 51.15188980102539,
+  "near_black": 0.0,
+  "hf_energy": 9.540374755859375,
+  "hf_ratio": 1.0
+ },
+ "steps": 300,
+ "rho": 0.0,
+ "clicks": "",
+ "models": {
+  "flow96": {
+   "rows": [
+    {
+     "n_frames": 300,
+     "frame_change": 23.295196533203125,
+     "luma_mean": 140.4056396484375,
+     "contrast": 32.5070686340332,
+     "near_black": 0.0,
+     "hf_energy": 19.047168731689453,
+     "hf_ratio": 1.9964801403625498,
+     "seed": "val ep1391@54",
+     "noise_seed": 0,
+     "in_band": false
+    },
+    {
+     "n_frames": 300,
+     "frame_change": 11.099483489990234,
+     "luma_mean": 160.0586395263672,
+     "contrast": 39.499656677246094,
+     "near_black": 0.0,
+     "hf_energy": 8.145857810974121,
+     "hf_ratio": 0.8538299615506415,
+     "seed": "val ep1384@56",
+     "noise_seed": 0,
+     "in_band": true
+    },
+    {
+     "n_frames": 300,
+     "frame_change": 8.38974380493164,
+     "luma_mean": 119.91950225830078,
+     "contrast": 55.923465728759766,
+     "near_black": 0.0,
+     "hf_energy": 5.673880577087402,
+     "hf_ratio": 0.5947230294703777,
+     "seed": "val ep1414@2",
+     "noise_seed": 0,
+     "in_band": true
+    }
+   ],
+   "mean": {
+    "frame_change": 14.261474609375,
+    "hf_ratio": 1.1483443771278563,
+    "contrast": 42.64339701334635,
+    "luma_mean": 140.1279271443685,
+    "near_black": 0.0,
+    "mean_in_band": 0.6666666666666666
+   }
+  },
+  "flow96c": {
+   "rows": [
+    {
+     "n_frames": 300,
+     "frame_change": 40.329490661621094,
+     "luma_mean": 176.15921020507812,
+     "contrast": 39.2665901184082,
+     "near_black": 0.0,
+     "hf_energy": 26.928359985351562,
+     "hf_ratio": 2.82256836596624,
+     "seed": "val ep1391@54",
+     "noise_seed": 0,
+     "in_band": false
+    },
+    {
+     "n_frames": 300,
+     "frame_change": 31.777637481689453,
+     "luma_mean": 183.928955078125,
+     "contrast": 37.085060119628906,
+     "near_black": 0.0,
+     "hf_energy": 21.744953155517578,
+     "hf_ratio": 2.279255659444883,
+     "seed": "val ep1384@56",
+     "noise_seed": 0,
+     "in_band": false
+    },
+    {
+     "n_frames": 300,
+     "frame_change": 39.23076248168945,
+     "luma_mean": 176.36080932617188,
+     "contrast": 38.43197250366211,
+     "near_black": 0.0,
+     "hf_energy": 28.617908477783203,
+     "hf_ratio": 2.999662928356882,
+     "seed": "val ep1414@2",
+     "noise_seed": 0,
+     "in_band": false
+    }
+   ],
+   "mean": {
+    "frame_change": 37.112630208333336,
+    "hf_ratio": 2.7004956512560017,
+    "contrast": 38.261207580566406,
+    "luma_mean": 178.81632486979166,
+    "near_black": 0.0,
+    "mean_in_band": 0.0
+   }
+  },
+  "runs/flow96e_pilot/final.pt": {
+   "rows": [
+    {
+     "n_frames": 300,
+     "frame_change": 6.935758113861084,
+     "luma_mean": 166.84518432617188,
+     "contrast": 53.06829833984375,
+     "near_black": 0.0,
+     "hf_energy": 14.697253227233887,
+     "hf_ratio": 1.5405320653894996,
+     "seed": "val ep1391@54",
+     "noise_seed": 0,
+     "in_band": false
+    },
+    {
+     "n_frames": 300,
+     "frame_change": 7.323278903961182,
+     "luma_mean": 173.0742645263672,
+     "contrast": 59.57933807373047,
+     "near_black": 0.0,
+     "hf_energy": 14.742042541503906,
+     "hf_ratio": 1.5452267776430735,
+     "seed": "val ep1384@56",
+     "noise_seed": 0,
+     "in_band": false
+    },
+    {
+     "n_frames": 300,
+     "frame_change": 7.504589080810547,
+     "luma_mean": 176.93521118164062,
+     "contrast": 60.93391036987305,
+     "near_black": 0.0,
+     "hf_energy": 14.15310001373291,
+     "hf_ratio": 1.4834951850335392,
+     "seed": "val ep1414@2",
+     "noise_seed": 0,
+     "in_band": false
+    }
+   ],
+   "mean": {
+    "frame_change": 7.2545420328776045,
+    "hf_ratio": 1.5230846760220373,
+    "contrast": 57.86051559448242,
+    "luma_mean": 172.2848866780599,
+    "near_black": 0.0,
+    "mean_in_band": 0.0
+   }
+  }
+ },
+ "seed_contexts": [
+  "val ep1391@54",
+  "val ep1384@56",
+  "val ep1414@2"
+ ],
+ "noise_seeds": [
+  0
+ ]
+}

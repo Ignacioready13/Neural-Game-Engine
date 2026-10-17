@@ -142,7 +142,9 @@ class FlowSteerModel(nn.Module):
                  cond_dim: int = 128, core_mode: str = "warp_resid",
                  freeze_core: bool = True, feat_dim: int = FEAT_DIM,
                  noise_scale: float = 0.08, attn: bool = False,
-                 net_base: int | None = None):
+                 net_base: int | None = None,
+                 noise_level_max: float = 0.0, level_buckets: int = 0,
+                 ctx_dropout: float = 0.0, level_dim: int = 32):
         super().__init__()
         self.K = K
         self.H = H
@@ -159,7 +161,26 @@ class FlowSteerModel(nn.Module):
         # ``base`` sizes the steering core (fixed by its checkpoint); ``net_base``
         # sizes the denoiser, so the generator can grow without touching the core.
         self.net_base = int(net_base or base)
-        self.net = VelocityUNet(N_FIXED_CH, K * feat_dim + H + 1, base=self.net_base,
+        # Stage 5c, GameNGen Sec 3.2.1 (additive; both default to off, so every
+        # existing checkpoint loads and behaves bit-identically):
+        #   * noise_level_max > 0 gives the model a learned embedding of the noise
+        #     bucket its (corrupted) frame conditioning sits in, so training can
+        #     corrupt the context at a random level and inference can ask for level 0;
+        #   * ctx_dropout > 0 adds a learned null token for the frame conditioning,
+        #     so classifier-free guidance can be applied at inference.
+        self.noise_level_max = float(noise_level_max or 0.0)
+        self.level_buckets = int(level_buckets or 0)
+        self.ctx_dropout = float(ctx_dropout or 0.0)
+        self.level_dim = int(level_dim)
+        self.level_embed = (nn.Embedding(self.level_buckets + 1, self.level_dim)
+                            if (self.noise_level_max > 0 and self.level_buckets > 0)
+                            else None)
+        self.null_embed = (nn.Parameter(torch.zeros(self.level_dim))
+                           if self.ctx_dropout > 0 else None)
+        extra = (self.level_dim if self.level_embed is not None else 0) \
+            + (self.level_dim if self.null_embed is not None else 0)
+        self.cond_dim = K * feat_dim + H + 1 + extra
+        self.net = VelocityUNet(N_FIXED_CH, self.cond_dim, base=self.net_base,
                                 mlp_width=cond_dim, attn=self.attn)
         self.freeze_core = freeze_core
         if freeze_core:
@@ -168,13 +189,25 @@ class FlowSteerModel(nn.Module):
 
     # -- conditioning ------------------------------------------------------ #
 
-    def condition(self, context: torch.Tensor, features: torch.Tensor):
+    def condition(self, context: torch.Tensor, features: torch.Tensor,
+                  level: torch.Tensor | None = None,
+                  dropped: torch.Tensor | None = None):
+        """``level``/``dropped`` default to the clean, not-dropped case (level 0)."""
         with torch.no_grad() if self.freeze_core else torch.enable_grad():
             inc, sign_logit = self.core.readout(context, features)
             dx = inc[:, 0]
             warped = warp_translate(context[:, -1], dx)
         cond = torch.cat([features.reshape(features.shape[0], -1), inc,
                           (dx / 8.0).unsqueeze(1)], dim=1)
+        B = cond.shape[0]
+        if self.level_embed is not None:
+            lv = (torch.zeros(B, dtype=torch.long, device=cond.device)
+                  if level is None else level.to(cond.device).long())
+            cond = torch.cat([cond, self.level_embed(lv)], dim=1)
+        if self.null_embed is not None:
+            d = (torch.zeros(B, device=cond.device, dtype=cond.dtype)
+                 if dropped is None else dropped.to(cond.device, cond.dtype))
+            cond = torch.cat([cond, d[:, None] * self.null_embed[None, :]], dim=1)
         return warped, dx, inc, sign_logit, cond
 
     def velocity(self, x_t, t, warped, context, dx, cond):
@@ -184,7 +217,8 @@ class FlowSteerModel(nn.Module):
 
     def predict(self, context: torch.Tensor, action: torch.Tensor | None = None,
                 features: torch.Tensor | None = None, seed: int | None = None,
-                return_shift: bool = False):
+                return_shift: bool = False, noise: torch.Tensor | None = None,
+                level: int | None = None, guidance: float = 1.0):
         from steer import features_from_context_action
         if features is None:
             if action is None:
@@ -192,14 +226,44 @@ class FlowSteerModel(nn.Module):
             features = features_from_context_action(action)
         context = context.float()
         features = features.float()
-        warped, dx, inc, sign_logit, cond = self.condition(context, features)
         B = context.shape[0]
-        if seed is None:
+        # Inference always conditions on the *clean* frame conditioning: the noise
+        # level is 0 (the level embedding's clean bucket) unless a caller says
+        # otherwise. Old checkpoints have no level embedding, so this is a no-op for
+        # them and they behave exactly as before.
+        lv = None
+        if self.level_embed is not None:
+            lv = torch.full((B,), int(level or 0), dtype=torch.long, device=context.device)
+        warped, dx, inc, sign_logit, cond = self.condition(context, features, level=lv)
+        if noise is not None:
+            # Explicit unit-variance noise in the warped frame's shape. Additive:
+            # allows a caller to supply temporally correlated noise; when omitted the
+            # behaviour is exactly as before (per-call fresh, or seed-deterministic).
+            x = self.noise_scale * noise.to(warped.device, warped.dtype)
+        elif seed is None:
             x = self.noise_scale * torch.randn_like(warped)
         else:
             g = torch.Generator(device="cpu").manual_seed(int(seed))
             x = self.noise_scale * torch.randn(warped.shape, generator=g).to(
                 warped.device, warped.dtype)
+        dt = 1.0 / self.steps
+        for i in range(self.steps):
+            t = torch.full((B,), i * dt, device=warped.device)
+            v = self.velocity(x, t, warped, context, dx, cond)
+            if self.null_embed is not None and guidance != 1.0:
+                # classifier-free guidance on the frame conditioning only
+                # (GameNGen Sec 3.3): drop the warped frame and extrapolate.
+                zeros = torch.zeros_like(warped)
+                _, _, _, _, cond_u = self.condition(context, features, level=lv,
+                                                    dropped=torch.ones(B, device=context.device))
+                v_u = self.velocity(x, t, zeros, context, dx, cond_u)
+                v = v_u + guidance * (v - v_u)
+            x = x + dt * v
+        out = torch.clamp(warped + x, -1.0, 1.0)
+        if return_shift:
+            return out, {"dx": dx, "inc": inc, "sign_logit": sign_logit,
+                         "warped": warped, "residual": x}
+        return out
         dt = 1.0 / self.steps
         for i in range(self.steps):
             t = torch.full((B,), i * dt, device=warped.device)
@@ -247,24 +311,68 @@ def revealed_mask(dx: torch.Tensor, H: int, W: int, edge_weight: float = 0.0,
 
 
 def flow_training_loss(model: FlowSteerModel, context, features, target,
-                       noise_aug: float = 0.0, rng=None, edge_weight: float = 0.0):
+                       noise_aug: float = 0.0, rng=None, edge_weight: float = 0.0,
+                       noise_level_max: float = 0.0, level_buckets: int = 0,
+                       level_clean_frac: float = 0.25, ctx_dropout: float = 0.0,
+                       corrupt_context: bool = False):
     """One rectified-flow training step's loss (residual parameterisation).
 
     ``target`` is the true next frame [B,3,H,W] in [-1,1]. Returns
     ``(loss, parts)`` where parts carries the readout-supervision hand-off.
     ``edge_weight`` up-weights the newly revealed strip (see :func:`revealed_mask`).
+
+    Stage 5c adds GameNGen's noise-augmented frame conditioning (Sec 3.2.1): the
+    **frame-valued conditioning the denoiser sees** — the warped last frame, built from
+    the last context frame — is corrupted with Gaussian noise whose level is drawn per
+    sample from ``level_buckets`` buckets up to ``noise_level_max`` (with
+    ``level_clean_frac`` of the batch left exactly clean), and the bucket reaches the
+    model through the learned level embedding. The **target stays clean** and the
+    residual is defined relative to the *corrupted* warp the model is actually given,
+    so the model must learn to remove the noise rather than copy it. Inference asks for
+    level 0, which is exactly the clean case.
+
+    Divergence from GameNGen worth naming: their *action* conditioning is a separate
+    clean input, while ours is a frozen readout applied to the context frames, so
+    corrupting the context would also corrupt the motion estimate. We therefore keep
+    the motion path (``dx``/``inc``) clean and corrupt only the frame channel — the
+    same structure (clean action, corrupted frame context) — unless
+    ``corrupt_context=True`` is passed. With ``noise_level_max=0`` (the default) this
+    function is exactly the old behaviour, bit for bit.
     """
-    warped, dx, inc, sign_logit, cond = model.condition(context, features)
+    B = context.shape[0]
+    lv = dropped = None
+    noisy_last = None
+    if noise_level_max > 0 and level_buckets > 0:
+        lv = torch.randint(0, level_buckets + 1, (B,), device=context.device)
+        level = noise_level_max * lv.to(context.dtype) / level_buckets
+        clean = torch.rand(B, device=context.device) < float(level_clean_frac)
+        level = torch.where(clean, torch.zeros_like(level), level)
+        lv = torch.where(clean, torch.zeros_like(lv), lv)
+        if corrupt_context:
+            context = context + level.view(B, 1, 1, 1, 1) * torch.randn_like(context)
+        else:
+            noisy_last = (context[:, -1]
+                          + level.view(B, 1, 1, 1) * torch.randn_like(context[:, -1]))
+    if ctx_dropout > 0:
+        dropped = (torch.rand(B, device=context.device) < float(ctx_dropout)
+                   ).to(context.dtype)
+    warped, dx, inc, sign_logit, cond = model.condition(context, features, level=lv,
+                                                        dropped=dropped)
+    if noisy_last is not None:
+        # the denoiser's frame channel is built from the NOISY last frame
+        warped = warp_translate(noisy_last, dx)
     r = target - warped
-    B = r.shape[0]
     t = torch.rand(B, device=r.device)
     t_ = t.view(B, 1, 1, 1)
     x0 = model.noise_scale * torch.randn_like(r)
     x_t = (1.0 - t_) * x0 + t_ * r
-    ctx_in = context
+    ctx_den = context
     if noise_aug > 0:
-        ctx_in = context + noise_aug * torch.randn_like(context)
-    v = model.velocity(x_t, t, warped, ctx_in, dx, cond)
+        ctx_den = context + noise_aug * torch.randn_like(context)
+    warped_in = warped
+    if dropped is not None:
+        warped_in = warped * (1.0 - dropped).view(B, 1, 1, 1)
+    v = model.velocity(x_t, t, warped_in, ctx_den, dx, cond)
     v_target = r - x0
     # MSE, not L1: the residual being generated is heavy-tailed (near zero on most
     # steps, large at reveals), and an L1 velocity loss drives the sampler to the
@@ -293,6 +401,10 @@ def save_flow_checkpoint(path: str, model: FlowSteerModel, config: dict,
             "core_mode": config.get("core_mode", "warp_resid"),
             "freeze_core": config.get("freeze_core", True),
             "noise_scale": config.get("noise_scale", 0.08),
+            "noise_level_max": float(config.get("noise_level_max") or 0.0),
+            "level_buckets": int(config.get("level_buckets") or 0),
+            "ctx_dropout": float(config.get("ctx_dropout") or 0.0),
+            "level_dim": int(config.get("level_dim", 32)),
         },
         "config": dict(config),
         "state_dict": model.state_dict(),

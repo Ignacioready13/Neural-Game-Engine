@@ -1,0 +1,23 @@
+{
+ "flow96": {
+  "mean_abs_dx_real_context": 0.5159493616471688,
+  "mean_abs_dx_generated_context": 0.31884278500960633,
+  "ratio_gen_over_real": 0.6179730196616592,
+  "n_real": 12,
+  "n_gen": 132
+ },
+ "flow96c": {
+  "mean_abs_dx_real_context": 0.5159493616471688,
+  "mean_abs_dx_generated_context": 0.429013859875726,
+  "ratio_gen_over_real": 0.8315038098043166,
+  "n_real": 12,
+  "n_gen": 132
+ },
+ "flow96e": {
+  "mean_abs_dx_real_context": 0.5159419849514961,
+  "mean_abs_dx_generated_context": 0.35163705632316344,
+  "ratio_gen_over_real": 0.6815437909287824,
+  "n_real": 12,
+  "n_gen": 132
+ }
+}
